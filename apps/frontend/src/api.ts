@@ -8,12 +8,11 @@ export interface ChatSnapshot {
   activeRun: Run | null;
 }
 
-export async function request<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch("/api" + path, {
     ...init,
     headers: {
       "content-type": "application/json",
-      authorization: "Bearer " + token,
       ...init.headers,
     },
   });

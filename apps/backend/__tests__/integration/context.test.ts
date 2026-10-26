@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { createApplication } from "@backend/application";
-import { loadConfig } from "@backend/config";
+import { resolveConfig } from "@backend/config";
 import { migrateDatabase } from "@plugins/sessions-pg/src/migrate";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -53,24 +53,33 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as { port: number }).port;
-    const previousKey = process.env.MODEL_API_KEY;
-    process.env.MODEL_API_KEY = "fixture-key";
-    const config = loadConfig({
-      NODE_ENV: "test",
-      LOG_LEVEL: "silent",
-      DATABASE_URL: databaseUrl,
-      AUTH_ISSUER: "test",
-      AUTH_AUDIENCE: "test",
-      AUTH_SECRET: "test-only-secret-at-least-thirty-two",
-      MODEL_ID: "fixture",
-      MODEL_API_KEY: "fixture-key",
-      MODEL_BASE_URL: `http://127.0.0.1:${port}/v1`,
-      MODEL_CONTEXT_WINDOW: "4096",
-      MODEL_OUTPUT_TOKENS: "256",
-      CONTEXT_SUMMARY_TOKENS: "128",
-      CONTEXT_TRIGGER_FRACTION: "0.5",
-      CONTEXT_KEEP_RECENT_TURNS: "1",
-    });
+    const config = resolveConfig(
+      {
+        model: {
+          provider: "fixture",
+          modelId: "fixture",
+          contextWindow: 4096,
+          maxOutputTokens: 256,
+        },
+        context: {
+          compaction: {
+            maxSummaryTokens: 128,
+            triggerFraction: 0.5,
+            keepRecentTurns: 1,
+          },
+        },
+      },
+      {
+        NODE_ENV: "test",
+        LOG_LEVEL: "silent",
+        DATABASE_URL: databaseUrl,
+        AUTH_ISSUER: "test",
+        AUTH_AUDIENCE: "test",
+        AUTH_SECRET: "test-only-secret-at-least-thirty-two",
+        DASHSCOPE_API_KEY: "fixture-key",
+        DASHSCOPE_BASE_URL: `http://127.0.0.1:${port}/v1`,
+      },
+    );
     const purposes: string[] = [];
     const policy: AgentMiddleware = {
       name: "integration-call-policy",
@@ -181,8 +190,6 @@ test(
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
-      if (previousKey === undefined) delete process.env.MODEL_API_KEY;
-      else process.env.MODEL_API_KEY = previousKey;
     }
   },
 );

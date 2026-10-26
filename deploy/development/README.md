@@ -1,6 +1,6 @@
 # 开发环境
 
-`compose.yaml` 只启动本工程的 PG，使用独立项目名、端口 5438 和数据卷。根目录 `.env` 供 backend、迁移、开发令牌与 eval 使用；Vite 的代理默认连接 4400，改端口时通过 `BACKEND_URL` 配置前端进程。
+`compose.yaml` 只启动本工程的 PG，使用独立项目名、端口 5438 和数据卷。根目录 `.env` 供 backend、迁移、frontend 代理与 eval 使用。工作台代理从中读取 `AGENT_ACCESS_TOKEN`，为 `/api` 请求附加访问凭证；默认连接 4400，改端口时通过 `BACKEND_URL` 配置。更换访问凭证后重启 frontend。
 
 Langfuse 是可选的外部开发依赖。可以连接已有测试实例，或者按照 [Langfuse 官方 Docker Compose 指南](https://langfuse.com/self-hosting/deployment/docker-compose)，在独立目录启动自己的实例。先根据线上服务版本选择对应 release，配置本地密钥并检查端口占用，不复用业务 PG 数据库。
 

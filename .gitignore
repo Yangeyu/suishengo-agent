@@ -8,3 +8,4 @@ dist/
 coverage/
 *.tsbuildinfo
 .DS_Store
+deploy/production/config.yaml

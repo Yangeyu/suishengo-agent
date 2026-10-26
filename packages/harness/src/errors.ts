@@ -33,7 +33,8 @@ export class ServiceError extends Error {
   constructor(
     public readonly code: ServiceErrorCode,
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }

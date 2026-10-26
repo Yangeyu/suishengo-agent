@@ -6,8 +6,8 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import { request } from "@frontend/api";
 
 export function App() {
-  const [token, setToken] = useState("");
-  const [credential, setCredential] = useState("");
+  const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionId, setSessionId] = useState<string>();
   const [initialMessages, setInitialMessages] = useState<UIMessage<MessageMetadata>[]>([]);
@@ -22,7 +22,6 @@ export function App() {
     () =>
       new DefaultChatTransport<UIMessage<MessageMetadata>>({
         api: "/api/chat",
-        headers: () => ({ authorization: "Bearer " + token }),
         prepareSendMessagesRequest: ({ messages }) => {
           const message = messages.at(-1)!;
 
@@ -42,7 +41,7 @@ export function App() {
           api: "/api/runs/" + activeRun.current + "/stream",
         }),
       }),
-    [token, sessionId],
+    [sessionId],
   );
 
   const { messages, setMessages, sendMessage, status, error, stop, resumeStream, clearError } =
@@ -58,27 +57,35 @@ export function App() {
     end.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    void connect();
+  }, []);
+
   async function connect() {
+    setConnecting(true);
+    setNotice("");
+
     try {
       await stop();
-      setToken("");
+      setConnected(false);
       setSessions([]);
       setSessionId(undefined);
       setInitialMessages([]);
       setMessages([]);
 
       const [list, capabilities] = await Promise.all([
-        request<SessionSummary[]>("/sessions", credential),
-        request<{ modelConfigured: boolean }>("/capabilities", credential),
+        request<SessionSummary[]>("/sessions"),
+        request<{ modelConfigured: boolean }>("/capabilities"),
       ]);
 
-      setToken(credential);
-      setCredential("");
+      setConnected(true);
       setSessions(list);
       setModelReady(capabilities.modelConfigured);
       setNotice(capabilities.modelConfigured ? "" : "后端已连接。配置模型后可开始对话。");
     } catch (error) {
       setNotice((error as Error).message);
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -87,7 +94,7 @@ export function App() {
       await stop();
       clearError();
 
-      const snapshot = await request<ChatSnapshot>("/sessions/" + id, token);
+      const snapshot = await request<ChatSnapshot>("/sessions/" + id);
       if (id === sessionId) setMessages(snapshot.messages);
       else {
         setInitialMessages(snapshot.messages);
@@ -109,7 +116,7 @@ export function App() {
 
   async function createSession() {
     try {
-      const session = await request<SessionSummary>("/sessions", token, {
+      const session = await request<SessionSummary>("/sessions", {
         method: "POST",
         body: JSON.stringify({ title: "新对话" }),
       });
@@ -137,9 +144,9 @@ export function App() {
 
   async function cancel() {
     try {
-      const snapshot = await request<ChatSnapshot>("/sessions/" + sessionId, token);
+      const snapshot = await request<ChatSnapshot>("/sessions/" + sessionId);
       if (snapshot.activeRun)
-        await request("/runs/" + snapshot.activeRun.id + "/cancel", token, { method: "POST" });
+        await request("/runs/" + snapshot.activeRun.id + "/cancel", { method: "POST" });
 
       await stop();
       activeRun.current = undefined;
@@ -152,7 +159,7 @@ export function App() {
   async function resume() {
     if (!sessionId) return;
 
-    const snapshot = await request<ChatSnapshot>("/sessions/" + sessionId, token);
+    const snapshot = await request<ChatSnapshot>("/sessions/" + sessionId);
     const runId = snapshot.activeRun?.id ?? activeRun.current;
     if (!runId) {
       setMessages(snapshot.messages);
@@ -180,7 +187,7 @@ export function App() {
             <small>Agent 开发工作台</small>
           </div>
         </div>
-        <button className="new-session" disabled={!token} onClick={() => void createSession()}>
+        <button className="new-session" disabled={!connected} onClick={() => void createSession()}>
           ＋ 新建对话
         </button>
         <div className="section-label">会话记录</div>
@@ -198,14 +205,14 @@ export function App() {
           {!sessions.length && <p className="empty-list">连接后创建第一个会话</p>}
         </nav>
         <div className="sidebar-footer">
-          <span className={token ? "dot online" : "dot"} />
-          {token ? "已认证" : "未连接"}
+          <span className={connected ? "dot online" : "dot"} />
+          {connected ? "已认证" : "未连接"}
           <span>仅开发测试</span>
-          {token && (
+          {connected && (
             <button
               onClick={() => {
                 void stop();
-                setToken("");
+                setConnected(false);
                 setSessions([]);
                 setSessionId(undefined);
                 setInitialMessages([]);
@@ -226,41 +233,21 @@ export function App() {
             <h1>申申</h1>
             <p>对话、接口与流式输出验证</p>
           </div>
-          {token && sessionId && !busy && (
+          {connected && sessionId && !busy && (
             <button onClick={() => void resume().catch((error) => setNotice(error.message))}>
               同步 / 恢复输出
             </button>
           )}
-          <span className="badge">{busy ? "生成中" : token ? "已连接" : "等待连接"}</span>
+          <span className="badge">{busy ? "生成中" : connected ? "已连接" : "等待连接"}</span>
         </header>
-        {!token ? (
+        {!connected ? (
           <section className="connect-panel">
             <span className="eyebrow">开始开发</span>
             <h2>连接你的 Agent 服务</h2>
-            <p>使用本地开发令牌进入工作台。不同用户的会话分别保存。</p>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void connect();
-              }}
-            >
-              <label htmlFor="token">访问令牌</label>
-              <input
-                id="token"
-                type="password"
-                autoComplete="off"
-                value={credential}
-                onChange={(event) => setCredential(event.target.value)}
-                placeholder="Bearer token"
-                required
-              />
-              <button className="primary" type="submit">
-                连接服务
-              </button>
-            </form>
-            <small>
-              本地令牌：<code>pnpm dev:token developer-a</code>
-            </small>
+            <p>使用已配置的访问凭证连接，查看对应用户的会话。</p>
+            <button className="primary" disabled={connecting} onClick={() => void connect()}>
+              {connecting ? "正在连接…" : "连接服务"}
+            </button>
           </section>
         ) : (
           <section className="conversation" aria-live="polite">
@@ -292,7 +279,7 @@ export function App() {
             )}
           </div>
         )}
-        {token && (
+        {connected && (
           <footer>
             <form
               className="composer"

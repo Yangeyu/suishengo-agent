@@ -34,3 +34,5 @@ await cp(
   new URL("dist/plugins/sessions-pg/migrations/", root),
   { recursive: true },
 );
+
+await cp(new URL("apps/backend/config.yaml", root), new URL("dist/apps/backend/config.yaml", root));

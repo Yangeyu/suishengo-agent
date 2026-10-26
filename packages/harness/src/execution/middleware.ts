@@ -1,3 +1,4 @@
+import type { Telemetry } from "@harness/telemetry";
 import type { Actor, RunScope } from "@harness/scope";
 import type { JsonValue } from "@harness/messages";
 import type { RunStatus } from "@harness/events";
@@ -17,7 +18,7 @@ export interface AgentMiddleware {
   onRunEvent?(event: Readonly<RunLifecycleEvent>): void | Promise<void>;
   create(
     scope: RunScope,
-    services: { models: ScopedModels; history: ConversationHistory },
+    services: { models: ScopedModels; history: ConversationHistory; telemetry: Telemetry },
   ): MiddlewareInstance | Promise<MiddlewareInstance>;
 }
 

@@ -20,7 +20,7 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
-type Options = { definitions: ToolDefinition[]; sources: ToolSource[]; telemetry: Telemetry };
+type Options = { definitions?: ToolDefinition[]; sources: (ToolSource | undefined)[] };
 type Invocation = {
   input: unknown;
   validate: ValidateFunction;
@@ -116,7 +116,7 @@ function createToolSession(
       context.signal.throwIfAborted();
       if (error instanceof ServiceError) throw error;
 
-      throw new ServiceError("TOOL_FAILED", "工具执行失败或超时");
+      throw new ServiceError("TOOL_FAILED", "工具执行失败或超时", { cause: error });
     }
   }
 
@@ -130,17 +130,35 @@ function createToolSession(
 
     invoke: (callId, name, input) =>
       withLogContext({ toolCallId: callId }, () =>
-        telemetry.observe("tool.execute", { "tool.name": name }, () => invoke(callId, name, input)),
+        telemetry.observe(
+          {
+            name: "tool.execute",
+            type: "tool",
+            signal: context.signal,
+            correlation: { runId: context.runId, sessionId: context.sessionId, toolCallId: callId },
+            metadata: { tool: name },
+          },
+          async (observation) => {
+            if (input !== undefined) observation.update({ input: input as JsonValue });
+            const result = await invoke(callId, name, input);
+            observation.update({ output: result });
+            return result;
+          },
+        ),
       ),
   };
 }
 
 export const toolsPlugin = {
   name: "tools",
+  inject: ["telemetry"],
 
   apply(ctx: Context, options: Options) {
+    const definitions = options.definitions ?? [];
+    const sources = options.sources.filter((source) => source !== undefined);
+    const telemetry = ctx.telemetry;
     ctx.provide("tools", {
-      configured: options.definitions.length > 0 || options.sources.length > 0,
+      configured: definitions.length > 0 || sources.length > 0,
 
       async open(context, maxCalls, intercept) {
         const opened: Awaited<ReturnType<ToolSource["open"]>>[] = [];
@@ -156,17 +174,10 @@ export const toolsPlugin = {
         };
 
         try {
-          for (const source of options.sources) opened.push(await source.open(context));
-          const definitions = [...options.definitions, ...opened.flatMap((source) => source.tools)];
+          for (const source of sources) opened.push(await source.open(context));
+          const available = [...definitions, ...opened.flatMap((source) => source.tools)];
 
-          return createToolSession(
-            definitions,
-            context,
-            maxCalls,
-            options.telemetry,
-            close,
-            intercept,
-          );
+          return createToolSession(available, context, maxCalls, telemetry, close, intercept);
         } catch (error) {
           // 后续来源初始化失败时，也要释放已经打开的连接。
           await close();

@@ -193,28 +193,6 @@ h2 {
   font-size: 14px;
   line-height: 1.9;
 }
-.connect-panel form {
-  display: grid;
-  gap: 12px;
-  margin: 28px 0 20px;
-}
-.connect-panel label {
-  font-size: 12px;
-}
-.connect-panel input {
-  border: 1px solid #dce5dd;
-  border-radius: 8px;
-  padding: 12px;
-}
-.connect-panel small {
-  color: #8c978f;
-  font-size: 11px;
-}
-code {
-  background: #f0f4f0;
-  padding: 3px 5px;
-  border-radius: 4px;
-}
 .conversation {
   flex: 1;
   overflow: auto;

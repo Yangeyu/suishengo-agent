@@ -2,6 +2,7 @@ import type { ContextStore } from "@harness/context";
 import type { Sessions } from "@harness";
 import type { Context } from "@deepseek-ai/cordis";
 import pg from "pg";
+import { z } from "zod";
 import { logger } from "@logging";
 import { drizzle } from "drizzle-orm/node-postgres";
 
@@ -13,10 +14,16 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
-export interface PostgresOptions {
-  url: string;
-  limits: { global: number; perUser: number };
-}
+export const postgresOptionsSchema = z.strictObject({
+  url: z.url(),
+  limits: z
+    .strictObject({
+      global: z.number().int().min(1).max(1000).default(8),
+      perUser: z.number().int().min(1).max(100).default(2),
+    })
+    .prefault({}),
+});
+export type PostgresOptions = z.infer<typeof postgresOptionsSchema>;
 
 export const sessionsPg = {
   name: "sessions-pg",

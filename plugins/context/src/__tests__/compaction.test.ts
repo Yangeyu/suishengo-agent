@@ -1,3 +1,5 @@
+import { createTelemetry } from "@plugins/telemetry/src/index";
+const telemetry = createTelemetry();
 import {
   estimateContext,
   type ContextStore,
@@ -88,6 +90,7 @@ test("compaction preserves canonical history and current input; only completed h
   const original = structuredClone(f.request.context.messages);
   const instance = await contextCompaction({ store: f.store, policy }).create(f.scope, {
     history: f.conversation,
+    telemetry,
     models: {
       resolve: f.models.resolve,
       generate: (request) => f.models.generate(request, f.scope),
@@ -135,6 +138,7 @@ test("cancelled compaction cannot save a summary; oversized mandatory context fa
   const f = setup();
   const instance = await contextCompaction({ store: f.store, policy }).create(f.scope, {
     history: f.conversation,
+    telemetry,
     models: {
       resolve: f.models.resolve,
       generate: (request) => f.models.generate(request, f.scope),
@@ -164,6 +168,7 @@ test("cancelled compaction cannot save a summary; oversized mandatory context fa
     other.conversation,
     [contextCompaction({ store: other.store, policy })],
     other.models,
+    telemetry,
   );
   try {
     await assert.rejects(
@@ -188,6 +193,7 @@ test("summary failure keeps a fitting view; lossy fallback invalidates earlier a
   };
   const softInstance = await contextCompaction({ store: soft.store, policy }).create(soft.scope, {
     history: soft.conversation,
+    telemetry,
     models: {
       resolve: soft.models.resolve,
       generate: (request) => soft.models.generate(request, soft.scope),
@@ -208,6 +214,7 @@ test("summary failure keeps a fitting view; lossy fallback invalidates earlier a
   const hard = setup();
   const hardInstance = await contextCompaction({ store: hard.store, policy }).create(hard.scope, {
     history: hard.conversation,
+    telemetry,
     models: {
       resolve: hard.models.resolve,
       generate: (request) => hard.models.generate(request, hard.scope),

@@ -15,7 +15,7 @@ pnpm start
 pnpm build:frontend
 ```
 
-[后端构建脚本](../scripts/build-backend.mjs) 清理输出、编译、处理别名并复制 migrations。生产使用完整的 `pnpm build:backend` 产物，不能只运行 tsc 后直接部署。测试参与类型检查，生产构建排除 `__tests__`。
+[后端构建脚本](../scripts/build-backend.mjs) 清理输出、编译、处理别名并复制 migrations 和 backend/config.yaml。生产使用完整的 `pnpm build:backend` 产物，不能只运行 tsc 后直接部署。测试参与类型检查，生产构建排除 `__tests__`。
 
 使用 `pnpm format` 统一格式，`pnpm format:check` 检查格式。Prettier 负责缩进和长行，语义空行仍按完整行为分组，注释解释意图、取舍与关键约束。
 

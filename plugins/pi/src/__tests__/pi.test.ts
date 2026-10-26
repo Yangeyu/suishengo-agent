@@ -1,3 +1,4 @@
+import { createTelemetry } from "@plugins/telemetry/src/index";
 import type { RunScope } from "@harness/scope";
 import type { AgentEvent, AgentExecutor, Telemetry } from "@harness";
 import { piModels } from "@plugins/pi/src/model/index";
@@ -16,6 +17,7 @@ test(
     let mode: "text" | "tool" | "loop" | "reject" | "hold" = "text";
     const received: { model: string; messages: { role: string; content: unknown }[] }[] = [];
     const observed: string[] = [];
+    const credentials: (string | undefined)[] = [];
     let executions = 0;
     let streaming: (() => void) | undefined;
 
@@ -24,6 +26,7 @@ test(
       for await (const chunk of request) body += chunk;
       const input = JSON.parse(body) as (typeof received)[number];
       received.push(input);
+      credentials.push(request.headers.authorization);
 
       if (mode === "reject") {
         response
@@ -73,21 +76,36 @@ test(
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address() as { port: number };
-    const previous = process.env.MODEL_API_KEY;
-    process.env.MODEL_API_KEY = "fixture-key";
     const ctx = new Context();
+    const steps: { index: number; status?: string }[] = [];
+    const baseTelemetry = createTelemetry();
     const telemetry: Telemetry = {
-      start: () => ({ within: (task) => task(), end() {} }),
-      observe: async (name, _attributes, task) => {
-        observed.push(name);
-        return task();
+      ...baseTelemetry,
+      start(spec) {
+        const observation = baseTelemetry.start(spec);
+        if (spec.name !== "agent.step") return observation;
+        const step = {
+          index: spec.correlation!.stepIndex!,
+          status: undefined as string | undefined,
+        };
+        steps.push(step);
+        return {
+          ...observation,
+          end(outcome) {
+            step.status = outcome.status;
+            observation.end(outcome);
+          },
+        };
       },
-      close: async () => {},
+      observe: async (spec, task) => {
+        observed.push(spec.name);
+        return baseTelemetry.observe(spec, task);
+      },
     };
 
     try {
+      ctx.provide("telemetry", telemetry);
       await ctx.plugin(toolsPlugin, {
-        telemetry,
         sources: [],
         definitions: [
           {
@@ -110,11 +128,13 @@ test(
         ],
       });
       await ctx.plugin(piModels, {
+        provider: "fixture",
+        apiKey: "fixture-key",
+        reasoning: false,
         baseUrl: "http://127.0.0.1:" + address.port + "/v1",
         modelId: "fixture",
         contextWindow: 128000,
         maxOutputTokens: 2048,
-        telemetry,
       });
 
       await ctx.plugin(pi);
@@ -154,6 +174,7 @@ test(
           { turns: [], summaryRevision: 0 },
           [],
           ctx.models,
+          telemetry,
         );
         const tools = await ctx.tools.open(
           middleware.execution.scope,
@@ -181,17 +202,27 @@ test(
         "hello world",
       );
       assert.equal(received.at(-1)?.model, "fixture");
+      assert.equal(credentials.at(-1), "Bearer fixture-key");
       assert.equal(received.at(-1)?.messages.at(-1)?.content, "question");
 
       mode = "tool";
+      steps.length = 0;
       events.length = 0;
       await run();
       assert.equal(executions, 1);
+      assert.ok(steps.every((step) => step.status !== undefined));
       assert.deepEqual(JSON.parse(String(received.at(-1)?.messages.at(-1)?.content)), {
         query: "hello",
         owner: "alice",
       });
-      assert.equal(events.filter((event) => event.type === "step-start").length, 2);
+      assert.deepEqual(steps, [
+        { index: 1, status: "completed" },
+        { index: 2, status: "completed" },
+      ]);
+      assert.deepEqual(
+        events.filter((event) => event.type === "step-start").map((event) => event.step),
+        steps.map((step) => step.index),
+      );
       assert.ok(observed.includes("model.generate") && observed.includes("tool.execute"));
 
       events.length = 0;
@@ -236,10 +267,10 @@ test(
       await started;
       controller.abort();
       await rejected;
+      assert.equal(steps.at(-1)?.status, "cancelled");
+      assert.ok(steps.every((step) => step.status !== undefined));
     } finally {
       await ctx.fiber.dispose();
-      if (previous === undefined) delete process.env.MODEL_API_KEY;
-      else process.env.MODEL_API_KEY = previous;
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

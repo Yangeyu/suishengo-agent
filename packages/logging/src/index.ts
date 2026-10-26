@@ -7,6 +7,9 @@ type LogContext = Readonly<{
   sessionId?: string;
   toolCallId?: string;
   traceId?: string;
+  spanId?: string;
+  stepId?: string;
+  stepIndex?: number;
 }>;
 
 // 只承载诊断字段；业务数据和权限身份由各自的执行参数负责。

@@ -8,7 +8,7 @@ import { SignJWT } from "jose";
 import pg from "pg";
 import { readUIMessageStream, type UIMessageChunk, type UIMessage } from "ai";
 import { createApplication } from "@backend/application";
-import { loadConfig } from "@backend/config";
+import { resolveConfig } from "@backend/config";
 import { migrateDatabase } from "@plugins/sessions-pg/src/migrate";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -23,18 +23,19 @@ test(
     await admin.connect();
     await admin.query("truncate chat_sessions cascade");
     await admin.end();
-    const config = {
-      ...loadConfig({
+    const config = resolveConfig(
+      {
+        runtime: { concurrency: { global: 2, perUser: 1 } },
+      },
+      {
         NODE_ENV: "test",
         DATABASE_URL: databaseUrl,
         AUTH_ISSUER: "integration-test",
         AUTH_AUDIENCE: "suishengo-agent",
         AUTH_SECRET: "integration-only-secret-at-least-thirty-two",
-        MAX_USER_RUNS: "1",
-        MAX_CONCURRENT_RUNS: "2",
-      }),
-      port: 0,
-    };
+      },
+    );
+    config.http.port = 0;
     let executions = 0;
     const agent: AgentExecutor = {
       async run(input) {
@@ -65,11 +66,10 @@ test(
         new SignJWT({})
           .setSubject(user)
           .setProtectedHeader({ alg: "HS256" })
-          .setIssuer(config.issuer)
-          .setAudience(config.audience)
+          .setIssuer(config.auth.issuer)
+          .setAudience(config.auth.audience)
           .setIssuedAt()
-          .setExpirationTime("1h")
-          .sign(new TextEncoder().encode(config.authSecret));
+          .sign(new TextEncoder().encode(config.auth.authSecret));
       const alice = await token("alice");
       const bob = await token("bob");
       const call = (credential: string, path: string, body?: unknown) =>

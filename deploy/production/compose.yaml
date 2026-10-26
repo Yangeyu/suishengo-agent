@@ -10,6 +10,14 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 4400
+      CONFIG_FILE: /app/config.yaml
+    volumes:
+      - type: bind
+        source: ./config.yaml
+        target: /app/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "127.0.0.1:${HTTP_PORT:-4400}:4400"
     stop_grace_period: 35s

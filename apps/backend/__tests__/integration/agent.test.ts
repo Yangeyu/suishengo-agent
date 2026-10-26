@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { SignJWT } from "jose";
 import { readUIMessageStream, type UIMessage, type UIMessageChunk } from "ai";
 import { createApplication } from "@backend/application";
-import { loadConfig } from "@backend/config";
+import { resolveConfig } from "@backend/config";
 import { migrateDatabase } from "@plugins/sessions-pg/src/migrate";
 import { createFixtures, actorSecret, serviceToken } from "@backend-tests/integration/fixtures";
 import type { ChatSnapshot, MessageMetadata } from "@backend/http/ai-sdk";
@@ -20,27 +20,38 @@ test(
     await migrateDatabase(databaseUrl!);
 
     const fixtures = await createFixtures();
-    const previous = process.env.MODEL_API_KEY;
-    process.env.MODEL_API_KEY = "fixture-key";
-    const config = {
-      ...loadConfig({
+    const config = resolveConfig(
+      {
+        model: {
+          provider: "fixture",
+          modelId: "fixture",
+          contextWindow: 131072,
+          maxOutputTokens: 4096,
+          reasoning: true,
+          compat: {
+            supportsDeveloperRole: false,
+            thinkingFormat: "qwen",
+            requiresReasoningContentOnAssistantMessages: true,
+          },
+        },
+        tools: { mcp: { allowedTools: ["lookup"] } },
+      },
+      {
         NODE_ENV: "test",
         LOG_LEVEL: "silent",
         DATABASE_URL: databaseUrl,
         AUTH_ISSUER: "integration",
         AUTH_AUDIENCE: "suishengo-agent",
         AUTH_SECRET: "integration-jwt-secret-thirty-two-characters",
-        MODEL_API_KEY: "fixture-key",
-        MODEL_ID: "fixture",
-        MODEL_BASE_URL: fixtures.modelUrl + "/v1",
+        DASHSCOPE_API_KEY: "fixture-key",
+        DASHSCOPE_BASE_URL: fixtures.modelUrl + "/v1",
         MCP_URL: fixtures.mcpUrl + "/mcp",
-        MCP_ALLOWED_TOOLS: "lookup",
         MCP_SERVICE_TOKEN: serviceToken,
         MCP_ACTOR_SECRET: actorSecret,
         MCP_AUDIENCE: "fixture-mcp",
-      }),
-      port: 0,
-    };
+      },
+    );
+    config.http.port = 0;
     let app: Awaited<ReturnType<typeof createApplication>> | undefined;
 
     try {
@@ -51,11 +62,10 @@ test(
           new SignJWT({})
             .setSubject(userId)
             .setProtectedHeader({ alg: "HS256" })
-            .setIssuer(config.issuer)
-            .setAudience(config.audience)
+            .setIssuer(config.auth.issuer)
+            .setAudience(config.auth.audience)
             .setIssuedAt()
-            .setExpirationTime("1h")
-            .sign(new TextEncoder().encode(config.authSecret)),
+            .sign(new TextEncoder().encode(config.auth.authSecret)),
         ),
       );
       const call = (credential: string, path: string, body?: unknown) =>
@@ -158,6 +168,11 @@ test(
           (request) => request.tools.map((tool) => tool.function.name).join() === "mcp_lookup",
         ),
       );
+      const toolFollowup = fixtures.requests.find(
+        (request) => request.messages.at(-1)?.role === "tool",
+      );
+      assert.equal(toolFollowup?.messages.at(-2)?.reasoning_content, "需要查询票根。");
+
       assert.equal(
         (await call(credentials[1]!, "/runs/" + answers[0]!.runId + "/stream")).status,
         404,
@@ -177,8 +192,6 @@ test(
     } finally {
       await app?.close();
       await fixtures.close();
-      if (previous === undefined) delete process.env.MODEL_API_KEY;
-      else process.env.MODEL_API_KEY = previous;
     }
   },
 );

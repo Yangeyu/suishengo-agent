@@ -1,3 +1,4 @@
+import type { PromptReference } from "@harness/telemetry";
 import type { AgentMessage } from "@harness/messages";
 import type { RunScope } from "@harness/scope";
 import type { ToolSession } from "@harness/tools";
@@ -17,6 +18,7 @@ export interface ModelInfo {
 
 export interface ModelRequest {
   readonly model: ModelInfo;
+  readonly prompt?: PromptReference;
   readonly purpose: "conversation" | "compaction";
   readonly context: ModelInput;
   readonly maxOutputTokens: number;
@@ -25,6 +27,7 @@ export interface ModelRequest {
 export interface ModelResult {
   message: Extract<AgentMessage, { role: "assistant" }>;
   usage: { input: number; output: number; total: number };
+  completionStartTime?: number;
   finishReason: "stop" | "toolUse" | "length";
 }
 

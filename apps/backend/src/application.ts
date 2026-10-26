@@ -1,6 +1,6 @@
 import type { AgentExecutor, ToolDefinition } from "@harness";
 import type { AgentMiddleware } from "@harness/execution/middleware";
-import { Context, type Fiber } from "@deepseek-ai/cordis";
+import { Context, type Fiber, type Plugin } from "@deepseek-ai/cordis";
 
 import { createRuntime } from "@runtime";
 import { sessionsPg } from "@plugins/sessions-pg/src/index";
@@ -27,14 +27,16 @@ export async function createApplication(
     middleware?: readonly AgentMiddleware[];
   } = {},
 ) {
-  logger.level = config.logLevel;
+  logger.level = config.logging.level;
   const ctx = new Context();
   const fibers: Fiber[] = [];
   let runtime: ReturnType<typeof createRuntime> | undefined;
   let http: ReturnType<typeof createHttp> | undefined;
   let closing: Promise<void> | undefined;
 
-  const mount = async (activation: Fiber & PromiseLike<Fiber>) => {
+  const mount = async <T>(plugin: Plugin.Object<T>, options: NoInfer<T> | false) => {
+    if (options === false) return;
+    const activation = ctx.plugin(plugin, options);
     fibers.push(activation);
     const fiber = await activation;
     if (fiber.state !== 2) throw new Error("Plugin startup failed: " + fiber.name);
@@ -50,77 +52,58 @@ export async function createApplication(
     })());
 
   try {
-    await mount(
-      ctx.plugin(sessionsPg, {
-        url: config.databaseUrl,
-        limits: { global: config.globalLimit, perUser: config.userLimit },
-      }),
-    );
-    await mount(ctx.plugin(telemetry, config.langfuse));
-    await mount(
-      ctx.plugin(prompts, {
-        local: systemPrompt,
-        connection: config.langfuse,
-        remote: config.prompt,
-      }),
-    );
+    await mount(sessionsPg, config.storage);
+    await mount(telemetry, config.telemetry);
+    await mount(prompts, {
+      local: systemPrompt,
+      connection: config.telemetry.connection,
+      remote: config.prompts.remote,
+    });
 
-    if (config.mcp) await mount(ctx.plugin(mcp, config.mcp));
-    await mount(
-      ctx.plugin(toolsPlugin, {
-        definitions: overrides.tools ?? [],
-        sources: config.mcp ? [ctx.mcp] : [],
-        telemetry: ctx.telemetry,
-      }),
-    );
+    await mount(mcp, config.tools.mcp);
+    await mount(toolsPlugin, {
+      definitions: overrides.tools,
+      sources: [ctx.get("mcp")],
+    });
 
-    if (config.modelId && config.modelBaseUrl) {
-      await mount(
-        ctx.plugin(piModels, {
-          modelId: config.modelId,
-          baseUrl: config.modelBaseUrl,
-          contextWindow: config.modelContextWindow,
-          maxOutputTokens: config.modelOutputTokens,
-          telemetry: ctx.telemetry,
-        }),
-      );
-    }
+    await mount(piModels, config.model);
     if (overrides.agent) ctx.provide("agent", overrides.agent);
-    else if (ctx.get("models")) await mount(ctx.plugin(pi));
+    else if (config.model) await mount(pi, undefined);
 
     const models = ctx.get("models");
-    const compaction =
-      models && config.compaction
-        ? contextCompaction({ store: ctx.sessions, policy: config.compaction })
-        : undefined;
+    const middleware: AgentMiddleware[] = [];
+    let summaryVersion: string | undefined;
+    if (models && config.context.compaction) {
+      const policy = config.context.compaction;
+      middleware.push(contextCompaction({ store: ctx.sessions, policy }));
+      summaryVersion = policy.version;
+    }
+    middleware.push(...(overrides.middleware ?? []));
 
     runtime = createRuntime({
       sessions: ctx.sessions,
       agent: ctx.get("agent"),
       tools: ctx.tools,
-      limits: config.limits,
-      system: ctx.systemPrompt,
-      timeoutMs: config.timeoutMs,
+      limits: config.runtime.limits,
+      system: ctx.systemPrompt.text,
+      prompt: ctx.systemPrompt.reference,
+      timeoutMs: config.runtime.timeoutMs,
       telemetry: ctx.telemetry,
       models,
-      contexts: createContexts(
-        ctx.sessions,
-        ctx.sessions,
-        compaction ? config.compaction!.version : undefined,
-      ),
-      middleware: [...(compaction ? [compaction] : []), ...(overrides.middleware ?? [])],
+      contexts: createContexts(ctx.sessions, ctx.sessions, summaryVersion),
+      middleware,
     });
     http = createHttp({
       sessions: ctx.sessions,
       runtime,
-      authenticate: createAuthenticator(config),
+      authenticate: createAuthenticator(config.auth),
     });
 
     return {
       http,
       runtime,
       sessions: ctx.sessions,
-      listen: () => http!.listen({ host: config.host, port: config.port }),
+      listen: () => http!.listen(config.http),
       close,
     };
   } catch (error) {

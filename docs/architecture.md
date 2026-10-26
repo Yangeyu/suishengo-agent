@@ -22,6 +22,8 @@ backend 是唯一生产进程。frontend 是开发工作台；eval 是通过 HTT
 | `plugins/tools`、`plugins/mcp`         | 工具授权、参数校验、执行和远端身份委托                                                 |
 | `plugins/prompts`、`plugins/telemetry` | Prompt 加载、观测和 Langfuse 导出                                                      |
 
+模型连接和凭证由 `backend/config.ts` 读取、校验后注入；`backend/config.yaml` 拥有模型选择、上下文压缩和执行预算。默认通过 DashScope 调用与 agent-harness 相同的 `deepseek-v4.1-flash`。Pi 模型适配器只消费显式参数，直接调用单个 API 实现，不读取环境变量或维护额外的模型注册集合。
+
 Cordis 负责资源生命周期和组装。运行逻辑通过显式契约使用能力，核心不依赖应用或插件。后端的 AI SDK 消息依赖只位于 HTTP 边界；前端直接消费 SDK 协议。PG 不定义展示规则，Pi 不写数据库或 HTTP 响应。
 
 ## Harness 内部结构
@@ -124,9 +126,31 @@ sequenceDiagram
 
 ## 日志与观测
 
-请求、运行和工具调用在各自边界建立关联字段，通过异步作用域传播。可信 Actor 仍由执行参数传递。诊断日志、Langfuse 观测和 PG 中的运行/输出记录有不同责任：业务重放依赖 PG，不能依赖日志或观测平台恢复。
+执行结构为 Run → Step → Operation。runtime 拥有 Run，Pi 循环在 turn 边界建立 Step；Step 包含本轮上下文准备、模型决策及其触发的工具执行。摘要模型调用属于压缩操作，不增加 Step 计数。Step 身份为 runId 与 stepIndex 的组合，与是否启用 Langfuse 无关。
 
-观测记录失败与业务执行失败分别处理。外部接入内容、上报范围及实际联调方法见[外部接入](integrations.md)。
+```text
+agent.run
+├─ agent.step (stepIndex=1)
+│  ├─ context.compact (实际触发压缩时)
+│  │  └─ model.generate (purpose=compaction)
+│  ├─ model.generate (purpose=conversation)
+│  └─ tool.execute
+├─ agent.step (stepIndex=2)
+│  └─ model.generate
+└─ context.save (有历史摘要需要保存时)
+```
+
+[观测契约](../packages/harness/src/telemetry.ts) 提供 `start`、`observe` 与 observation 的 `within/update/event/end`。跨回调阶段使用显式句柄，常规异步操作使用 `observe`。Pi 通过 Step 的 `within` 显式绑定模型和工具入口，不依赖事件监听器的异步作用域自动传播。结束幂等，失败和取消时也关闭 Step。
+
+模型实际调用在 runtime 的统一入口记录一次 generation，Pi 适配器只返回模型结果、usage 和首个生成内容的时间。工具入口记录校验、授权、执行及输出处理；工具失败可由 Agent 后续步骤处理，不必使整个 Run 失败。上下文模块拥有压缩原因、前后估算、丢弃范围、摘要版本和有损回退事件。估算注明 UTF-8 字节及额外开销，实际 usage 独立记录。
+
+middleware 的 `create` 接收统一 telemetry；新增已有类型的操作和 metadata 不需修改 runtime 或导出器。例如在 `beforeModel` 内使用 `telemetry.observe({ name: "context.retrieve", type: "retriever", signal: scope.signal }, async observation => ...)`，自动继承当前 Step。只为有独立诊断价值的操作记录 observation，不为每个 hook 自动生成节点。运行结束状态及落库失败由 agent.run 记录。
+
+Telemetry 插件集中映射 Langfuse 字段、限制 metadata 大小、屏蔽凭证字段和导出。每个子节点携带会话、运行、Step（若存在）、环境和发布版本。诊断日志携带相同的关联字段及 trace/span ID；业务身份仍通过显式参数传递。backend 使用 `LANGFUSE_CAPTURE_CONTENT` 控制输入输出记录，开发和测试默认开启、生产默认关闭。Run 使用明确的 user/assistant 消息角色记录问题与已提交回答，generation 与工具分别记录请求和结果；适配器 replay 数据不导出。内容策略仍需按产品要求处理脱敏和采样，metadata 不承担对话正文。
+
+观测记录和导出失败不替换业务结果。状态区分 completed、cancelled、timeout、denied、failed，异常只记录安全错误码，不上传原始异常正文。Run 在终态提交处理后结束；提交失败记录 RUN_PERSISTENCE_FAILED，并保留此前 executionStatus，同时停止接单。关闭时先排空运行，再关闭 exporter。
+
+PG 拥有持久化消息、运行终态与重放事实，Langfuse 不承担恢复或审计数据的唯一存储。外部配置和平台验收边界见[外部接入](integrations.md)。
 
 ## Agent Middleware
 

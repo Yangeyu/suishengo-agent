@@ -1,0 +1,41 @@
+# 模型服务地址和凭据由 DASHSCOPE_BASE_URL、DASHSCOPE_API_KEY 提供。
+# 仅管理会话时设为 model: false；production 必须启用模型。
+model:
+  provider: dashscope
+  modelId: deepseek-v4.1-flash
+  contextWindow: 131072
+  maxOutputTokens: 4096
+  reasoning: true
+  compat:
+    supportsStore: false
+    supportsDeveloperRole: false
+    supportsStrictMode: false
+    supportsUsageInStreaming: true
+    supportsReasoningEffort: true
+    supportsLongCacheRetention: false
+    maxTokensField: max_tokens
+    thinkingFormat: qwen
+    requiresReasoningContentOnAssistantMessages: true
+
+context:
+  compaction:
+    version: summary-v1
+    triggerFraction: 0.7
+    keepRecentTurns: 2
+    maxSummaryTokens: 1024
+
+runtime:
+  concurrency:
+    global: 8
+    perUser: 2
+  timeoutMs: 120000
+  limits:
+    maxSteps: 8
+    maxToolCalls: 12
+    maxTokens: 32000
+
+tools:
+  mcp: false
+
+prompts:
+  remote: false

@@ -1,4 +1,4 @@
-import type { Telemetry } from "@harness";
+import { createTelemetry } from "@plugins/telemetry/src/index";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Context } from "@deepseek-ai/cordis";
@@ -8,15 +8,11 @@ import { toolsPlugin } from "@plugins/tools/src/index";
 test("tool validation, authorization and timeout precede effects without retries", async () => {
   const ctx = new Context();
   let executions = 0;
-  const telemetry: Telemetry = {
-    start: () => ({ within: (task) => task(), end() {} }),
-    observe: (_name, _attributes, task) => task(),
-    close: async () => {},
-  };
+  const telemetry = createTelemetry();
 
   try {
+    ctx.provide("telemetry", telemetry);
     await ctx.plugin(toolsPlugin, {
-      telemetry,
       sources: [],
       definitions: [
         {

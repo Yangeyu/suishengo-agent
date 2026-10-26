@@ -1,142 +1,140 @@
+import { readFileSync } from "node:fs";
+import { parse } from "yaml";
 import { z } from "zod";
+import { authOptionsSchema } from "@backend/http/auth";
+import { runtimeOptionsSchema } from "@runtime/config";
+import { compactionPolicySchema } from "@plugins/context/src/compaction";
+import { mcpOptionsSchema } from "@plugins/mcp/src/index";
+import { piModelOptionsSchema } from "@plugins/pi/src/model/config";
+import { remotePromptSchema } from "@plugins/prompts/src/index";
+import { postgresOptionsSchema } from "@plugins/sessions-pg/src/index";
+import { telemetryOptionsSchema } from "@plugins/telemetry/src/index";
 
 const optional = (value?: string) => value?.trim() || undefined;
-const schema = z.object({
-  environment: z.enum(["development", "test", "production"]),
-  host: z.string().min(1),
-  port: z.coerce.number().int().min(1).max(65535),
-  databaseUrl: z.string().url(),
-  issuer: z.string().min(1),
-  audience: z.string().min(1),
-  authSecret: z.string().min(32).optional(),
-  jwksUrl: z.string().url().optional(),
-  modelBaseUrl: z.string().url().optional(),
-  modelId: z.string().min(1).optional(),
-  modelContextWindow: z.coerce.number().int().min(1024).max(10000000),
-  modelOutputTokens: z.coerce.number().int().positive(),
-  compaction: z
-    .object({
-      version: z.string().min(1),
-      triggerFraction: z.coerce.number().gt(0).lt(1),
-      keepRecentTurns: z.coerce.number().int().min(1),
-      maxSummaryTokens: z.coerce.number().int().positive(),
+const fileSchema = z.strictObject({
+  model: z
+    .union([
+      z.literal(false),
+      z.strictObject(piModelOptionsSchema.shape).omit({ baseUrl: true, apiKey: true }),
+    ])
+    .default(false),
+  context: z
+    .strictObject({
+      compaction: z.union([z.literal(false), compactionPolicySchema]).default(false),
     })
-    .optional(),
-  globalLimit: z.coerce.number().int().min(1).max(1000),
-  userLimit: z.coerce.number().int().min(1).max(100),
-  timeoutMs: z.coerce.number().int().min(1000).max(600000),
-  limits: z.object({
-    maxSteps: z.coerce.number().int().min(1).max(50),
-    maxToolCalls: z.coerce.number().int().min(1).max(100),
-    maxTokens: z.coerce.number().int().min(1).max(1000000),
-  }),
-  logLevel: z.enum(["debug", "info", "warn", "error", "silent"]),
-  mcp: z
-    .object({
-      url: z.string().url(),
-      allowedTools: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,59}$/)).min(1),
-      serviceToken: z.string().min(1),
-      actorSecret: z.string().min(32),
-      audience: z.string().min(1),
+    .prefault({}),
+  runtime: runtimeOptionsSchema
+    .extend({
+      concurrency: postgresOptionsSchema.shape.limits,
     })
-    .optional(),
-  langfuse: z
-    .object({
-      baseUrl: z.string().url(),
-      publicKey: z.string().min(1),
-      secretKey: z.string().min(1),
+    .prefault({}),
+  tools: z
+    .strictObject({
+      mcp: z
+        .union([z.literal(false), mcpOptionsSchema.pick({ allowedTools: true })])
+        .default(false),
     })
-    .optional(),
-  prompt: z
-    .object({ name: z.string().min(1), version: z.coerce.number().int().positive() })
-    .optional(),
+    .prefault({}),
+  prompts: z
+    .strictObject({
+      remote: z.union([z.literal(false), remotePromptSchema]).default(false),
+    })
+    .prefault({}),
 });
-export type Config = z.infer<typeof schema>;
+
+export type Config = ReturnType<typeof resolveConfig>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const compactionEnabled =
-    z.enum(["true", "false"]).parse(env.CONTEXT_COMPACTION ?? "true") === "true";
-  const config = schema.parse({
-    environment: env.NODE_ENV ?? "development",
-    host: env.HOST ?? "127.0.0.1",
-    port: env.PORT ?? 4400,
-    databaseUrl: env.DATABASE_URL,
-    issuer: env.AUTH_ISSUER,
-    audience: env.AUTH_AUDIENCE,
+  const path = optional(env.CONFIG_FILE) ?? new URL("../config.yaml", import.meta.url);
+  return resolveConfig(parse(readFileSync(path, "utf8")), env);
+}
+
+export function resolveConfig(input: unknown, env: NodeJS.ProcessEnv) {
+  const file = fileSchema.parse(input);
+  const environment = z
+    .enum(["development", "test", "production"])
+    .parse(env.NODE_ENV ?? "development");
+  const http = z
+    .strictObject({
+      host: z.string().min(1).default("127.0.0.1"),
+      port: z.coerce.number().int().min(1).max(65535).default(4400),
+    })
+    .parse({ host: optional(env.HOST), port: optional(env.PORT) });
+  const logging = {
+    level: z.enum(["debug", "info", "warn", "error", "silent"]).parse(env.LOG_LEVEL ?? "info"),
+  };
+  const auth = authOptionsSchema.parse({
+    issuer: optional(env.AUTH_ISSUER),
+    audience: optional(env.AUTH_AUDIENCE),
     authSecret: optional(env.AUTH_SECRET),
     jwksUrl: optional(env.AUTH_JWKS_URL),
-    modelBaseUrl: optional(env.MODEL_BASE_URL),
-    modelId: optional(env.MODEL_ID),
-    modelContextWindow: env.MODEL_CONTEXT_WINDOW ?? 128000,
-    modelOutputTokens: env.MODEL_OUTPUT_TOKENS ?? 2048,
-    compaction: !compactionEnabled
-      ? undefined
-      : {
-          version: "summary-v1",
-          triggerFraction: env.CONTEXT_TRIGGER_FRACTION ?? 0.7,
-          keepRecentTurns: env.CONTEXT_KEEP_RECENT_TURNS ?? 2,
-          maxSummaryTokens: env.CONTEXT_SUMMARY_TOKENS ?? 1024,
-        },
-    globalLimit: env.MAX_CONCURRENT_RUNS ?? 8,
-    userLimit: env.MAX_USER_RUNS ?? 2,
-    timeoutMs: env.RUN_TIMEOUT_MS ?? 120000,
-    limits: {
-      maxSteps: env.AGENT_MAX_STEPS ?? 8,
-      maxToolCalls: env.AGENT_MAX_TOOL_CALLS ?? 12,
-      maxTokens: env.AGENT_MAX_TOKENS ?? 32000,
-    },
-    logLevel: env.LOG_LEVEL ?? "info",
-    mcp: [
-      env.MCP_URL,
-      env.MCP_ALLOWED_TOOLS,
-      env.MCP_SERVICE_TOKEN,
-      env.MCP_ACTOR_SECRET,
-      env.MCP_AUDIENCE,
-    ].some(Boolean)
-      ? {
-          url: env.MCP_URL,
-          allowedTools: env.MCP_ALLOWED_TOOLS?.split(",")
-            .map((name) => name.trim())
-            .filter(Boolean),
-          serviceToken: env.MCP_SERVICE_TOKEN,
-          actorSecret: env.MCP_ACTOR_SECRET,
-          audience: env.MCP_AUDIENCE,
-        }
-      : undefined,
-    langfuse: [env.LANGFUSE_BASE_URL, env.LANGFUSE_PUBLIC_KEY, env.LANGFUSE_SECRET_KEY].some(
-      Boolean,
+  });
+  const storage = postgresOptionsSchema.parse({
+    url: optional(env.DATABASE_URL),
+    limits: file.runtime.concurrency,
+  });
+  const model =
+    file.model &&
+    piModelOptionsSchema.parse({
+      ...file.model,
+      baseUrl: optional(env.DASHSCOPE_BASE_URL),
+      apiKey: optional(env.DASHSCOPE_API_KEY),
+    });
+  const mcp =
+    file.tools.mcp &&
+    mcpOptionsSchema.parse({
+      ...file.tools.mcp,
+      url: optional(env.MCP_URL),
+      serviceToken: optional(env.MCP_SERVICE_TOKEN),
+      actorSecret: optional(env.MCP_ACTOR_SECRET),
+      audience: optional(env.MCP_AUDIENCE),
+    });
+  const telemetry = telemetryOptionsSchema.parse({
+    environment,
+    release: optional(env.APP_RELEASE),
+    captureContent:
+      z
+        .enum(["true", "false"])
+        .parse(
+          env.LANGFUSE_CAPTURE_CONTENT ?? (environment === "production" ? "false" : "true"),
+        ) === "true",
+    connection: [env.LANGFUSE_BASE_URL, env.LANGFUSE_PUBLIC_KEY, env.LANGFUSE_SECRET_KEY].some(
+      optional,
     )
       ? {
-          baseUrl: env.LANGFUSE_BASE_URL,
-          publicKey: env.LANGFUSE_PUBLIC_KEY,
-          secretKey: env.LANGFUSE_SECRET_KEY,
+          baseUrl: optional(env.LANGFUSE_BASE_URL),
+          publicKey: optional(env.LANGFUSE_PUBLIC_KEY),
+          secretKey: optional(env.LANGFUSE_SECRET_KEY),
         }
       : undefined,
-    prompt:
-      env.LANGFUSE_PROMPT_NAME || env.LANGFUSE_PROMPT_VERSION
-        ? { name: env.LANGFUSE_PROMPT_NAME, version: env.LANGFUSE_PROMPT_VERSION }
-        : undefined,
   });
-  if (
-    config.modelOutputTokens >= config.modelContextWindow ||
-    (config.compaction && config.compaction.maxSummaryTokens >= config.modelContextWindow)
-  )
-    throw new Error("Model output and summary limits must be smaller than the context window");
-  if (Boolean(config.authSecret) === Boolean(config.jwksUrl))
-    throw new Error("Configure exactly one authentication source");
-  if (
-    config.environment === "production" &&
-    (config.authSecret || !config.jwksUrl?.startsWith("https://"))
-  ) {
+
+  if (environment === "production" && (auth.authSecret || !auth.jwksUrl?.startsWith("https://")))
     throw new Error("Production requires HTTPS JWKS authentication");
-  }
-  const modelFields = [config.modelBaseUrl, config.modelId, optional(env.MODEL_API_KEY)];
-  if (modelFields.some(Boolean) && !modelFields.every(Boolean))
-    throw new Error("Model configuration is incomplete");
-  if (config.environment === "production" && !modelFields.every(Boolean))
+  if (environment === "production" && !model)
     throw new Error("Production requires a model configuration");
-  if (config.prompt && !config.langfuse) throw new Error("Remote prompt requires Langfuse");
-  if (config.environment === "production" && config.mcp && !config.mcp.url.startsWith("https://"))
+  if (file.prompts.remote && !telemetry.connection)
+    throw new Error("Remote prompt requires Langfuse");
+  if (environment === "production" && mcp && !mcp.url.startsWith("https://"))
     throw new Error("Production MCP requires HTTPS");
-  return config;
+  if (
+    model &&
+    file.context.compaction &&
+    file.context.compaction.maxSummaryTokens >= model.contextWindow
+  )
+    throw new Error("Summary limit must be smaller than the context window");
+
+  return {
+    environment,
+    http,
+    logging,
+    auth,
+    storage,
+    model,
+    telemetry,
+    context: file.context,
+    prompts: file.prompts,
+    tools: { mcp },
+    runtime: { timeoutMs: file.runtime.timeoutMs, limits: file.runtime.limits },
+  };
 }

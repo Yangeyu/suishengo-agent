@@ -19,4 +19,4 @@ export type {
   Sessions,
 } from "@harness/sessions";
 
-export type { Trace, Telemetry } from "@harness/telemetry";
+export type { Observation, Telemetry } from "@harness/telemetry";

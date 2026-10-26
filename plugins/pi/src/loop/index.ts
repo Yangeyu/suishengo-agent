@@ -1,3 +1,4 @@
+import type { StepExecution } from "@harness/execution";
 import { ServiceError, type AgentExecutor, type JsonValue } from "@harness";
 import type { Context } from "@deepseek-ai/cordis";
 import { Agent, type AgentEvent as PiEvent } from "@earendil-works/pi-agent-core";
@@ -28,6 +29,7 @@ export const pi = {
         const { signal } = input.execution.scope;
         signal.throwIfAborted();
         let step = 0;
+        let activeStep: StepExecution | undefined;
         let toolCalls = 0;
         let failure: unknown;
 
@@ -43,22 +45,27 @@ export const pi = {
             try {
               const info = input.execution.models.resolve();
               let completed: Extract<AssistantMessageEvent, { type: "done" }> | undefined;
-              await input.execution.model(
-                {
-                  model: info,
-                  purpose: "conversation",
-                  maxOutputTokens: info.maxOutputTokens,
-                  context: {
-                    system: input.system,
-                    summary: input.execution.history.summary?.text,
-                    messages: messages.filter((message) => message.role !== "system").map(fromPi),
-                    tools: input.tools.definitions,
+              await activeStep!.within(() =>
+                input.execution.model(
+                  {
+                    model: info,
+                    purpose: "conversation",
+                    prompt: input.prompt,
+                    maxOutputTokens: info.maxOutputTokens,
+                    context: {
+                      system: input.system,
+                      summary: input.execution.history.summary?.text,
+                      messages: messages.filter((message) => message.role !== "system").map(fromPi),
+                      tools: input.tools.definitions,
+                    },
                   },
-                },
-                async (request, scope) => {
-                  completed = await ctx.piModel.call(request, scope, (event) => output.push(event));
-                  return modelResult(completed);
-                },
+                  async (request, scope) => {
+                    completed = await ctx.piModel.call(request, scope, (event) =>
+                      output.push(event),
+                    );
+                    return modelResult(completed);
+                  },
+                ),
               );
               // Native completion is released only after policy hooks and resource cleanup succeed.
               if (!completed) throw new Error("Model call produced no completion");
@@ -104,7 +111,9 @@ export const pi = {
               description: tool.description,
               parameters: Type.Unsafe<Record<string, JsonValue>>(tool.inputSchema),
               execute: async (callId, args) => {
-                const output = await input.tools.invoke(callId, tool.name, args);
+                const output = await activeStep!.within(() =>
+                  input.tools.invoke(callId, tool.name, args),
+                );
                 return {
                   content: [{ type: "text" as const, text: JSON.stringify(output) }],
                   details: { output },
@@ -117,7 +126,7 @@ export const pi = {
           prepareRequest: async () => {
             if (failure) throw failure;
             signal.throwIfAborted();
-            if (++step > input.limits.maxSteps || input.execution.scope.budget.remaining <= 0) {
+            if (step > input.limits.maxSteps || input.execution.scope.budget.remaining <= 0) {
               failure = new ServiceError("AGENT_LIMIT", "Agent 轮数或 token 预算已达上限");
               throw failure;
             }
@@ -136,9 +145,20 @@ export const pi = {
         });
 
         async function persistEvent(event: PiEvent) {
-          if (event.type === "turn_start")
-            return input.onEvent({ type: "step-start", step: step + 1 });
-          if (event.type === "turn_end") return input.onEvent({ type: "step-end", step });
+          if (event.type === "turn_start") {
+            activeStep = input.execution.startStep(++step);
+            return input.onEvent({ type: "step-start", step });
+          }
+          if (event.type === "turn_end") {
+            await input.onEvent({ type: "step-end", step });
+            activeStep?.end(
+              failure || signal.aborted
+                ? input.execution.outcome(failure ?? signal.reason)
+                : { status: "completed" },
+            );
+            activeStep = undefined;
+            return;
+          }
 
           if (event.type === "message_update") {
             const delta = event.assistantMessageEvent;
@@ -205,12 +225,20 @@ export const pi = {
           if (!last || last.role !== "assistant" || last.stopReason !== "stop") {
             throw new ServiceError("MODEL_FAILED", "模型未正常完成回答");
           }
+        } catch (error) {
+          failure ??= error;
+          throw error;
         } finally {
           signal.removeEventListener("abort", abort);
           agent.abort();
           await agent.waitForIdle();
           await Promise.all(pending);
           unsubscribe();
+          activeStep?.end(
+            failure || signal.aborted
+              ? input.execution.outcome(failure ?? signal.reason)
+              : { status: "completed" },
+          );
         }
       },
     } satisfies AgentExecutor);

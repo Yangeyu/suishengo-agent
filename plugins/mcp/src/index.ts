@@ -9,14 +9,16 @@ import type { Context } from "@deepseek-ai/cordis";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SignJWT } from "jose";
+import { z } from "zod";
 
-export interface McpOptions {
-  url: string;
-  allowedTools: string[];
-  serviceToken: string;
-  actorSecret: string;
-  audience: string;
-}
+export const mcpOptionsSchema = z.strictObject({
+  url: z.url(),
+  allowedTools: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,59}$/)).min(1),
+  serviceToken: z.string().min(1),
+  actorSecret: z.string().min(32),
+  audience: z.string().min(1),
+});
+export type McpOptions = z.infer<typeof mcpOptionsSchema>;
 
 declare module "@deepseek-ai/cordis" {
   interface Context {

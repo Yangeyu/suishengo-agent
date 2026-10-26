@@ -1,3 +1,4 @@
+import type { Observation, ObservationOutcome, PromptReference } from "@harness/telemetry";
 import type { Contexts } from "@harness/context";
 import type { AgentMiddleware } from "@harness/execution/middleware";
 import type { RunScope } from "@harness/scope";
@@ -24,6 +25,7 @@ export function createRuntime(options: {
   tools: Tools;
   limits: AgentLimits;
   system: string;
+  prompt?: PromptReference;
   timeoutMs: number;
   telemetry: Telemetry;
   contexts: Contexts;
@@ -35,10 +37,17 @@ export function createRuntime(options: {
   let closing = false;
   let healthy = true;
 
-  async function runAgent(input: { actor: Actor; run: Run }, execution: ExecutionContext) {
-    const { actor, run } = input;
+  async function runAgent(
+    input: { actor: Actor; run: Run; trace: Observation },
+    execution: ExecutionContext,
+  ) {
+    const { actor, run, trace } = input;
     const signal = execution.signal!;
     const history = await options.contexts.load(actor, run.id);
+    const user = history.turns
+      .find((turn) => turn.runId === run.id)
+      ?.messages.find((message) => message.role === "user");
+    if (user?.role === "user") trace.update({ input: [{ role: "user", content: user.text }] });
 
     let consumed = 0;
     const scope: RunScope = Object.freeze({
@@ -65,6 +74,7 @@ export function createRuntime(options: {
       history,
       options.middleware ?? [],
       options.models,
+      options.telemetry,
     );
     let tools: Awaited<ReturnType<Tools["open"]>> | undefined;
 
@@ -78,6 +88,7 @@ export function createRuntime(options: {
 
       await options.agent!.run({
         system: options.system,
+        prompt: options.prompt,
         messages: history.turns.flatMap((turn) => turn.messages),
         tools,
         execution: middleware.execution,
@@ -85,6 +96,13 @@ export function createRuntime(options: {
         onEvent: async (event) => {
           signal.throwIfAborted();
           await options.sessions.append(run, event);
+          if (event.type === "message" && event.message.role === "assistant") {
+            const answer = event.message.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n");
+            if (answer) trace.update({ output: [{ role: "assistant", content: answer }] });
+          }
         },
       });
 
@@ -107,18 +125,24 @@ export function createRuntime(options: {
       actor,
       status: "running",
     });
-    const trace = options.telemetry.start(run.id, run.sessionId);
+    const trace = options.telemetry.start({
+      name: "agent.run",
+      type: "agent",
+      correlation: { runId: run.id, sessionId: run.sessionId },
+    });
+    let outcome: ObservationOutcome = { status: "completed" };
     let status: Exclude<RunStatus, "running"> = "completed";
 
     try {
       await trace.within(() =>
         policy(runAgent).timeout(options.timeoutMs).build()(
-          { actor, run },
+          { actor, run, trace },
           { signal: controller.signal },
         ),
       );
     } catch (error) {
       status = controller.signal.aborted ? "cancelled" : "failed";
+      outcome = options.telemetry.outcome(error, controller.signal);
       logger.warn({
         event: "run.execution_failed",
         runId: run.id,
@@ -128,7 +152,8 @@ export function createRuntime(options: {
 
     // 终态落库失败后停止接单，避免数据库中仍运行的记录与进程状态继续分叉。
     try {
-      await options.sessions.finish(run, status);
+      trace.update({ metadata: { executionStatus: status } });
+      await trace.within(() => options.sessions.finish(run, status));
       notifyRun(options.middleware ?? [], {
         type: "finished",
         runId: run.id,
@@ -138,9 +163,10 @@ export function createRuntime(options: {
       });
     } catch {
       healthy = false;
+      outcome = { status: "failed", errorCode: "RUN_PERSISTENCE_FAILED" };
       logger.error({ event: "run.persistence_failed", runId: run.id });
     } finally {
-      trace.end(status);
+      trace.end(outcome);
       active.delete(run.id);
     }
   }

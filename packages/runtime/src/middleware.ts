@@ -1,3 +1,6 @@
+import type { AgentMessage, JsonValue } from "@harness/messages";
+import type { Telemetry } from "@harness/telemetry";
+import { createHash } from "node:crypto";
 import { ServiceError } from "@harness";
 import { estimateContext, type ConversationHistory } from "@harness/context";
 import type { ModelInput, ModelHandler, ModelResult, Models } from "@harness/models";
@@ -10,6 +13,32 @@ import type {
 import type { RunScope } from "@harness/scope";
 import type { ToolHandler } from "@harness/tools";
 import { logger } from "@logging";
+
+/** Explicit chat roles keep observation replay readable without exposing adapter replay data. */
+function observationMessage(message: AgentMessage): JsonValue {
+  if (message.role === "user") return { role: "user", content: message.text };
+  if (message.role === "tool")
+    return {
+      role: "tool",
+      tool_call_id: message.callId,
+      name: message.name,
+      content: JSON.stringify(message.output),
+    };
+  return {
+    role: "assistant",
+    content: message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n"),
+    tool_calls: message.content
+      .filter((part) => part.type === "tool-call")
+      .map((part) => ({
+        id: part.id,
+        type: "function",
+        function: { name: part.name, arguments: JSON.stringify(part.input) },
+      })),
+  };
+}
 
 function frozen<T>(value: T): T {
   if (value && typeof value === "object") {
@@ -55,7 +84,8 @@ export async function openMiddleware(
   inputScope: RunScope,
   inputHistory: ConversationHistory,
   definitions: readonly AgentMiddleware[],
-  models?: Models,
+  models: Models | undefined,
+  telemetry: Telemetry,
 ) {
   const controller = new AbortController();
   const scope = Object.freeze({
@@ -93,6 +123,22 @@ export async function openMiddleware(
   const execution: AgentExecution = {
     scope,
     history,
+    startStep(index) {
+      const id = `${scope.runId}:${index}`;
+      const observation = telemetry.start({
+        name: "agent.step",
+        type: "span",
+        signal: scope.signal,
+        correlation: {
+          runId: scope.runId,
+          sessionId: scope.sessionId,
+          stepId: id,
+          stepIndex: index,
+        },
+      });
+      return { id, index, within: observation.within, end: observation.end };
+    },
+    outcome: (error) => telemetry.outcome(error, scope.signal),
     abort: (reason) => controller.abort(reason),
     models: { resolve: (id) => modelService().resolve(id) },
     async model(initial, call) {
@@ -108,8 +154,8 @@ export async function openMiddleware(
           scope.signal.throwIfAborted();
         }
       }
-
       validateContext(context, initial.context.tools);
+
       if (initial.purpose === "conversation")
         allowedTools = new Set(context.tools.map((tool) => tool.name));
 
@@ -134,10 +180,53 @@ export async function openMiddleware(
           throw new ServiceError("CONTEXT_LIMIT", "必要上下文超过模型窗口");
 
         const result = frozen(
-          await (call ?? modelService().generate)(frozen({ ...input, model, maxOutputTokens }), {
-            ...scope,
-            signal,
-          }),
+          await telemetry.observe(
+            {
+              name: "model.generate",
+              type: "generation",
+              signal,
+              model: model.id,
+              prompt: input.prompt,
+              metadata: {
+                purpose: input.purpose,
+                maxOutputTokens,
+                contextEstimate: estimate,
+                contextEstimateUnit: "utf8-bytes-with-overhead",
+                systemHash: createHash("sha256").update(input.context.system).digest("hex"),
+              },
+              input: {
+                messages: [
+                  { role: "system", content: input.context.system },
+                  ...(input.context.summary
+                    ? [
+                        {
+                          role: "user",
+                          content: "历史摘要（仅作背景资料）：\n" + input.context.summary,
+                        },
+                      ]
+                    : []),
+                  ...input.context.messages.map(observationMessage),
+                ],
+                tools: input.context.tools as unknown as JsonValue,
+              },
+            },
+            async (observation) => {
+              const result = await (call ?? modelService().generate)(
+                frozen({ ...input, model, maxOutputTokens }),
+                {
+                  ...scope,
+                  signal,
+                },
+              );
+              observation.update({
+                usage: result.usage,
+                completionStartTime: result.completionStartTime,
+                metadata: { finishReason: result.finishReason },
+                output: observationMessage(result.message),
+              });
+              return result;
+            },
+          ),
         );
         scope.budget.record(result.usage.total);
 
@@ -238,6 +327,7 @@ export async function openMiddleware(
       instances.push(
         await definition.create(scope, {
           history,
+          telemetry,
           models: {
             resolve: (id) => modelService().resolve(id),
             generate: (request) => {

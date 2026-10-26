@@ -1,3 +1,4 @@
+import type { Telemetry } from "@harness/telemetry";
 import { ServiceError } from "@harness";
 import { estimateContext, type ContextStore, type ContextSummary } from "@harness/context";
 import type { ModelInput, ModelRequest, ScopedModels } from "@harness/models";
@@ -6,15 +7,17 @@ import type { AgentMiddleware } from "@harness/execution/middleware";
 import type { RunScope } from "@harness/scope";
 import type { AgentMessage } from "@harness/messages";
 import { pipeline } from "@flow";
+import { z } from "zod";
 
 import { logger } from "@logging";
 
-export interface CompactionPolicy {
-  version: string;
-  triggerFraction: number;
-  keepRecentTurns: number;
-  maxSummaryTokens: number;
-}
+export const compactionPolicySchema = z.strictObject({
+  version: z.string().min(1).default("summary-v1"),
+  triggerFraction: z.number().gt(0).lt(1).default(0.7),
+  keepRecentTurns: z.number().int().min(1).default(2),
+  maxSummaryTokens: z.number().int().positive().default(1024),
+});
+export type CompactionPolicy = z.infer<typeof compactionPolicySchema>;
 
 type CompactionState = {
   history: HistoryTurn[];
@@ -29,6 +32,7 @@ type CompactionInput = {
   request: ModelRequest;
   scope: RunScope;
   models: ScopedModels;
+  telemetry: Telemetry;
   policy: CompactionPolicy;
   state: CompactionState;
 };
@@ -49,7 +53,7 @@ export function contextCompaction(options: {
   const { store, policy } = options;
   return {
     name: "context-compaction",
-    create(scope, { models, history: conversation }) {
+    create(scope, { models, history: conversation, telemetry }) {
       const history = conversation.turns.filter((turn) => turn.completed);
       // One state per run; later model requests continue from the same compaction boundary.
       const state: CompactionState = {
@@ -62,7 +66,8 @@ export function contextCompaction(options: {
       };
 
       const prepareContext = pipeline(
-        (request: ModelRequest) => prepareRequest({ request, scope, models, policy, state }),
+        (request: ModelRequest) =>
+          prepareRequest({ request, scope, models, policy, state, telemetry }),
         compactContext,
         projectContext,
       );
@@ -72,12 +77,25 @@ export function contextCompaction(options: {
         async afterAgent() {
           if (!state.pendingSummary) return;
           scope.signal.throwIfAborted();
-          await store.saveSummary(
-            scope.actor,
-            scope.sessionId,
-            state.pendingSummary,
-            conversation.summaryRevision,
-            scope.signal,
+          const summary = state.pendingSummary;
+          await telemetry.observe(
+            {
+              name: "context.save",
+              type: "span",
+              signal: scope.signal,
+              metadata: {
+                throughPosition: summary.throughPosition,
+                policyVersion: summary.policyVersion,
+              },
+            },
+            () =>
+              store.saveSummary(
+                scope.actor,
+                scope.sessionId,
+                summary,
+                conversation.summaryRevision,
+                scope.signal,
+              ),
           );
         },
       };
@@ -99,13 +117,39 @@ async function compactContext(ctx: CompactionContext): Promise<CompactionContext
   let view = projectContext(ctx);
   const trigger = Math.floor(ctx.request.model.contextWindow * ctx.policy.triggerFraction);
 
-  while (estimateContext(view) > Math.min(inputLimit(ctx), trigger)) {
-    const end = selectBatchEnd(ctx, view);
-    if (end === undefined) break;
-    if (!(await compactBatch(ctx, end, view))) break;
-    view = projectContext(ctx);
-  }
-  return ctx;
+  if (estimateContext(view) <= Math.min(inputLimit(ctx), trigger)) return ctx;
+  const before = estimateContext(view);
+  const removedBefore = ctx.state.removedGroups;
+  return ctx.telemetry.observe(
+    {
+      name: "context.compact",
+      type: "span",
+      signal: ctx.scope.signal,
+      metadata: {
+        trigger: inputLimit(ctx) < trigger ? "budget-or-window" : "threshold",
+        beforeSize: before,
+        sizeUnit: "utf8-bytes-with-overhead",
+        policyVersion: ctx.policy.version,
+      },
+    },
+    async (observation) => {
+      while (estimateContext(view) > Math.min(inputLimit(ctx), trigger)) {
+        const end = selectBatchEnd(ctx, view);
+        if (end === undefined) break;
+        if (!(await compactBatch(ctx, end, view))) break;
+        view = projectContext(ctx);
+      }
+      observation.update({
+        metadata: {
+          afterSize: estimateContext(view),
+          removedGroups: ctx.state.removedGroups - removedBefore,
+          lossy: ctx.state.lossy,
+          durableCandidate: Boolean(ctx.state.pendingSummary),
+        },
+      });
+      return ctx;
+    },
+  );
 }
 
 function selectBatchEnd(ctx: CompactionContext, view: ModelInput): number | undefined {
@@ -140,7 +184,18 @@ async function compactBatch(
   } catch (error) {
     scope.signal.throwIfAborted();
     if (scope.budget.remaining <= 0) throw error;
-    if (estimateContext(view) <= inputLimit(ctx)) return false;
+    const retain = estimateContext(view) <= inputLimit(ctx);
+    ctx.telemetry
+      .start({
+        name: "context.compaction_fallback",
+        type: "event",
+        metadata: {
+          action: retain ? "retain-context" : "drop-old-groups",
+          removedGroups: retain ? 0 : end - state.removedGroups,
+        },
+      })
+      .end(ctx.telemetry.outcome(error));
+    if (retain) return false;
 
     // Dropping complete groups is lossy; no later batch can repair the missing history.
     state.lossy = true;

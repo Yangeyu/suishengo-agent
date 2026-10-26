@@ -1,3 +1,4 @@
+import type { Telemetry } from "@harness/telemetry";
 import type { AgentMiddleware } from "@harness/execution/middleware";
 import type { RunScope } from "@harness/scope";
 import type { ModelRequest, Models } from "@harness/models";
@@ -89,6 +90,7 @@ test("middleware composes in order, isolates concurrent state, and closes provid
         history,
         [extension("A"), extension("B")],
         models,
+        telemetry,
       );
       try {
         await run.start();
@@ -159,6 +161,7 @@ test("late wrapper failures suppress final commit; cancellation closes streams a
       },
     ],
     models,
+    telemetry,
   );
   let finals = 0;
   await assert.rejects(async () => {
@@ -191,12 +194,13 @@ test("late wrapper failures suppress final commit; cancellation closes streams a
         },
       ],
       models,
+      telemetry,
     ),
     /setup/,
   );
   assert.equal(disposed, 1);
 
-  const cancelled = await openMiddleware(scope("alice"), history, [], models);
+  const cancelled = await openMiddleware(scope("alice"), history, [], models, telemetry);
   cancelled.execution.abort();
   await assert.rejects(cancelled.execution.model(request), { name: "AbortError" });
   await cancelled.close();
@@ -228,6 +232,7 @@ test("tool execution cannot repeat or widen a prepared grant; notifications do n
       },
     ],
     models,
+    telemetry,
   );
   await run.execution.model(request);
   let writes = 0;
@@ -262,6 +267,7 @@ test("tool execution cannot repeat or widen a prepared grant; notifications do n
       },
     ],
     models,
+    telemetry,
   );
   await recovery.execution.model(request);
   assert.deepEqual(
@@ -294,3 +300,10 @@ test("tool execution cannot repeat or widen a prepared grant; notifications do n
   await Promise.resolve();
   assert.equal(observed, true);
 });
+
+const telemetry: Telemetry = {
+  start: () => ({ within: (task) => task(), update() {}, event() {}, end() {} }),
+  observe: async (_spec, task) => task(telemetry.start(_spec)),
+  outcome: () => ({ status: "failed" }),
+  close: async () => {},
+};

@@ -15,18 +15,15 @@ pnpm install --frozen-lockfile
 cp .env.example .env
 pnpm infra:up
 pnpm db:migrate
+# 填写模型连接与密钥，或在 apps/backend/config.yaml 中设置 model: false
 pnpm dev
 ```
 
-默认端口：backend `4400`、frontend `5188`、PG `5438`。打开 <http://127.0.0.1:5188>，另开终端生成本地令牌，粘贴到工作台：
+默认端口：backend `4400`、frontend `5188`、PG `5438`。在根目录 `.env` 设置 `AGENT_ACCESS_TOKEN` 后打开 <http://127.0.0.1:5188>，工作台自动连接并加载该凭证所属用户的会话。
 
-```sh
-pnpm dev:token developer-a
-```
+`AGENT_ACCESS_TOKEN` 必须是身份签发方提供、符合后端认证契约的访问令牌；`AUTH_SECRET` 是后端验签密钥，两者不能互换。工作台的 Vite 代理读取令牌并附加到 API 请求，浏览器不输入、保存或打包该令牌。当前工作台凭证不设置过期时间；更换用户或轮换凭证时更新配置并重启 frontend；刷新会自动重新连接，选择会话后可手动恢复输出。认证字段要求见[接入说明](docs/integrations.md)。
 
-令牌有效期两小时，仅保存在页面内存，刷新后重新连接。换用 `developer-b` 可验证用户隔离。
-
-没有模型配置时，可以管理会话。实际对话需要在 `.env` 中同时设置 `MODEL_BASE_URL`、`MODEL_ID`、`MODEL_API_KEY` 并重启后端。其他外部依赖见[接入说明](docs/integrations.md)。
+模型、压缩和执行预算由 [backend/config.yaml](apps/backend/config.yaml) 配置，默认通过 DashScope 调用 `deepseek-v4.1-flash`。启动前在 `.env` 填写 `DASHSCOPE_BASE_URL` 与 `DASHSCOPE_API_KEY`；仅管理会话时将 YAML 的 `model` 设为 `false`。启用能力但缺少必要配置会阻止启动。配置文件修改后重启 backend；其他外部依赖和配置见[接入说明](docs/integrations.md)。
 
 Ctrl+C 停止应用；`pnpm infra:down` 停止本工程 PG，保留数据卷。
 

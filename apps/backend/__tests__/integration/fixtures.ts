@@ -7,7 +7,7 @@ import { z } from "zod";
 export const actorSecret = "integration-mcp-assertion-secret-thirty-two";
 export const serviceToken = "integration-service-token";
 export type ModelRequest = {
-  messages: { role: string; content: string }[];
+  messages: { role: string; content: string; reasoning_content?: string }[];
   tools: { function: { name: string } }[];
 };
 
@@ -80,6 +80,10 @@ export async function createFixtures() {
   });
 
   const modelHttp = createServer(async (request, response) => {
+    if (request.headers.authorization !== "Bearer fixture-key") {
+      response.writeHead(401).end();
+      return;
+    }
     let body = "";
     for await (const chunk of request) body += chunk;
     const input = JSON.parse(body) as ModelRequest;
@@ -105,6 +109,7 @@ export async function createFixtures() {
       send({ role: "assistant", content: "查询完成：" + result.owner });
       send({}, "stop");
     } else {
+      send({ role: "assistant", reasoning_content: "需要查询票根。" });
       send({
         role: "assistant",
         tool_calls: [

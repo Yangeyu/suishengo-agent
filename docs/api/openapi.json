@@ -102,7 +102,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -144,7 +144,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -200,7 +200,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -279,7 +279,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -348,7 +348,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -417,7 +417,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -516,7 +516,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -658,7 +658,7 @@
             }
           },
           "401": {
-            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "description": "UNAUTHORIZED：访问令牌缺失或无效",
             "content": {
               "application/json": {
                 "schema": {

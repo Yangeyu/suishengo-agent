@@ -1,12 +1,19 @@
+import type { PromptReference } from "@harness/telemetry";
 import type { Context } from "@deepseek-ai/cordis";
 import { LangfuseClient } from "@langfuse/client";
+import { z } from "zod";
 import type { LangfuseConnection } from "@plugins/telemetry/src/index";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
-    systemPrompt: string;
+    systemPrompt: { text: string; reference?: PromptReference };
   }
 }
+
+export const remotePromptSchema = z.strictObject({
+  name: z.string().min(1),
+  version: z.number().int().positive(),
+});
 
 export const prompts = {
   name: "prompts",
@@ -15,11 +22,11 @@ export const prompts = {
     options: {
       local: string;
       connection?: LangfuseConnection;
-      remote?: { name: string; version: number };
+      remote: z.infer<typeof remotePromptSchema> | false;
     },
   ) {
     if (!options.remote) {
-      ctx.provide("systemPrompt", options.local);
+      ctx.provide("systemPrompt", { text: options.local });
       return;
     }
     if (!options.connection) throw new Error("Missing Langfuse connection");
@@ -33,6 +40,9 @@ export const prompts = {
       maxRetries: 0,
     });
     if (prompt.isFallback) throw new Error("Configured prompt is unavailable");
-    ctx.provide("systemPrompt", prompt.prompt);
+    ctx.provide("systemPrompt", {
+      text: prompt.prompt,
+      reference: { name: prompt.name, version: prompt.version },
+    });
   },
 };
