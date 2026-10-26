@@ -26,6 +26,8 @@ backend 是唯一生产进程。frontend 是开发工作台；eval 是通过 HTT
 
 Cordis 负责资源生命周期和组装。运行逻辑通过显式契约使用能力，核心不依赖应用或插件。后端的 AI SDK 消息依赖只位于 HTTP 边界；前端直接消费 SDK 协议。PG 不定义展示规则，Pi 不写数据库或 HTTP 响应。
 
+具体内置工具归 `plugins/tools/src/builtins`，成员文件集中定义名称、展示名称、描述、参数、授权和执行逻辑。当前会话检索位于 `search-current-session.ts`；`tools` 插件接收 sessions 能力后组装该内置工具，再合并显式定义和外部工具来源。application 只挂载插件并注入 sessions 等依赖，产品 Prompt 继续归 `backend/agent`。检索契约和结果归现有 `harness/sessions`，PG 负责所有权、运行位置边界、正文过滤与有界查询；工具通过 sessions 契约读取数据，不直接依赖 PG，也不把任意 SQL 或会话标识暴露给模型。具体语义见[当前会话检索](integrations.md#当前会话检索)。
+
 ## Harness 内部结构
 
 Harness 定义能力契约和与存储实现无关的会话状态规则。目录按职责组织；只有包含多个组成的 sessions 和 execution 展开为目录。
@@ -87,6 +89,33 @@ sequenceDiagram
 每次订阅从 run 起点读取核心事件，HTTP 用本次订阅自己的状态生成 SDK 事件。内容片段 ID 根据 run、assistant 序号和内容序号稳定生成，快照与流输出一致。整轮重放不依赖内存中的原订阅，不公开部分游标续传。客户端先替换对应消息，再接收重放内容。
 
 重复请求命中已有 run 时不重复执行。客户端断连只结束订阅；执行、工具会话与 AbortController 均按 run 隔离。关闭时停止接纳、等待事务、取消并等待运行收尾，然后关闭 HTTP 和插件资源。
+
+## 前端工具展示名称
+
+工具的 `name` 是模型调用、执行匹配和 Langfuse 使用的稳定标识。可选 `displayName` 是前端标题，`description` 是给模型的用途与限制说明。当前会话检索定义 `name: "search_current_session"`、`displayName: "检索当前会话"`；两者与工具描述一起归 `plugins/tools/src/builtins/search-current-session.ts`。
+
+`plugins/tools` 在创建本次 `ToolSession` 时整理定义：标题去除首尾空白，允许 1–80 个 Unicode 码点，过滤含控制、格式或行段分隔字符的值。不合格的展示值省略，不影响原有工具注册与执行。没有标题的工具直接回退到标识，不从模型描述推测标题。外部 ToolSource 可通过同一可选字段提供标题。
+
+```text
+工具定义（name、displayName）
+  → 本次 ToolSession 的定义快照
+  → runtime 接收 assistant message 事件，补齐 tool-call.displayName
+  → sessions.append：消息和对应事件同事务提交
+  → HTTP：快照与 SSE 从已保存的 displayName 投影 toolMetadata
+  → 前端：displayName 优先，toolName 兜底
+```
+
+`harness/messages` 的 `tool-call` 保存可选 `displayName`，不引入 SDK 类型。runtime 在现有 `onEvent` 提交边界按 `part.name` 查找本次工具定义，复制消息并补充该字段，再调用 `sessions.append`。执行器传入的展示名称会被丢弃，未知工具不补名称。处理不修改原始执行器消息，不更改内容块顺序、callId、name、input 或 provider replay 数据。结果消息通过 callId 关联调用，不重复保存标题。
+
+展示名称与调用事实进入同一个 message 事件，沿用 PG 对消息、事件的原子提交。消息和事件使用现有 JSONB 字段，无新增数据库结构或历史回填。持久化失败仍按原有运行失败规则处理。
+
+快照和 SSE 均读取保存的标题，不重新发现工具或查询全局名称表。工具改名或下线后，已有调用保留当时名称，新调用使用新的定义；旧记录没有标题时回退原始标识。历史文案不会随工具定义更新而改变。所有权校验继续使用已验证身份和既有会话接口。
+
+`ModelInput.tools` 只描述 `name`、`description`、`inputSchema`，Pi 构造模型请求时显式选择这三个字段；模型历史转换也忽略展示名称。Langfuse 的工具 observation 继续使用原始名称，不增加展示元数据或新的 span。
+
+HTTP 适配归 `backend/http/ai-sdk.ts`，快照的动态工具 part 和 SSE 的 `tool-input-available` 共用展示投影，使用 SDK 支持的 `toolMetadata.displayName`。结果或错误按 callId 更新原调用，保留其展示信息。公开字段与兼容规则见[客户端接入](api/README.md#工具展示名称)。
+
+工作台 `MessagePart` 直接从消息元数据计算标题，不维护翻译表或额外展示状态。折叠时显示“检索当前会话 · 已完成”及工具图标，展开时显示原始工具标识、输入、输出或错误；标题以普通 React 文本渲染，不解析 HTML/Markdown。新增工具只需在定义中提供标题。
 
 ## 数据关系与事务
 

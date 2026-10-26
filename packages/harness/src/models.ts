@@ -1,13 +1,13 @@
 import type { PromptReference } from "@harness/telemetry";
 import type { AgentMessage } from "@harness/messages";
 import type { RunScope } from "@harness/scope";
-import type { ToolSession } from "@harness/tools";
+import type { ToolDefinition } from "@harness/tools";
 
 export interface ModelInput {
   system: string;
   summary?: string;
   messages: AgentMessage[];
-  tools: ToolSession["definitions"];
+  tools: Pick<ToolDefinition, "name" | "description" | "inputSchema">[];
 }
 
 export interface ModelInfo {

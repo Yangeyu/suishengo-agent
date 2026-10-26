@@ -2,6 +2,7 @@ import type { ToolInterceptor } from "@harness/tools";
 import {
   ServiceError,
   type JsonValue,
+  type Sessions,
   type ToolContext,
   type ToolDefinition,
   type ToolSource,
@@ -13,6 +14,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { Ajv, type ValidateFunction } from "ajv";
 import { pipeline, policy, type ExecutionContext } from "@flow";
 import { logger, withLogContext } from "@logging";
+import { searchCurrentSession } from "@plugins/tools/src/builtins/search-current-session";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -20,7 +22,11 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
-type Options = { definitions?: ToolDefinition[]; sources: (ToolSource | undefined)[] };
+type Options = {
+  sessions?: Pick<Sessions, "getRun" | "search">;
+  definitions?: ToolDefinition[];
+  sources: (ToolSource | undefined)[];
+};
 type Invocation = {
   input: unknown;
   validate: ValidateFunction;
@@ -121,11 +127,17 @@ function createToolSession(
   }
 
   return {
-    definitions: definitions.map(({ name, description, inputSchema }) => ({
-      name,
-      description,
-      inputSchema,
-    })),
+    definitions: definitions.map(({ name, displayName, description, inputSchema }) => {
+      const title = displayName?.trim();
+      const validTitle =
+        title && Array.from(title).length <= 80 && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(title);
+      return {
+        name,
+        ...(validTitle ? { displayName: title } : {}),
+        description,
+        inputSchema,
+      };
+    }),
     close,
 
     invoke: (callId, name, input) =>
@@ -154,7 +166,10 @@ export const toolsPlugin = {
   inject: ["telemetry"],
 
   apply(ctx: Context, options: Options) {
-    const definitions = options.definitions ?? [];
+    const definitions = [
+      ...(options.sessions ? [searchCurrentSession(options.sessions)] : []),
+      ...(options.definitions ?? []),
+    ];
     const sources = options.sources.filter((source) => source !== undefined);
     const telemetry = ctx.telemetry;
     ctx.provide("tools", {

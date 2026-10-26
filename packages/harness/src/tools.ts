@@ -20,6 +20,8 @@ export interface ToolContext {
 
 export interface ToolDefinition {
   name: string;
+  /** Human-readable title; never used for dispatch or model tool selection. */
+  displayName?: string;
   description: string;
   inputSchema: Record<string, unknown>;
   effect: "read" | "write";
@@ -36,7 +38,7 @@ export interface ToolSource {
 }
 
 export interface ToolSession {
-  definitions: Pick<ToolDefinition, "name" | "description" | "inputSchema">[];
+  definitions: Pick<ToolDefinition, "name" | "displayName" | "description" | "inputSchema">[];
   invoke(callId: string, name: string, input: unknown): Promise<JsonValue>;
   close(): Promise<void>;
 }

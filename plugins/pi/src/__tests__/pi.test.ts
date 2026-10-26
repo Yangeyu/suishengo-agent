@@ -98,6 +98,7 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
       definitions: [
         {
           name: "lookup",
+          displayName: "前端专用查询标题",
           description: "Fixture lookup",
           effect: "read",
           timeoutMs: 1000,
@@ -159,7 +160,21 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
           },
         },
         { turns: [], summaryRevision: 0 },
-        [],
+        [
+          {
+            name: "check-model-tool-fields",
+            create() {
+              return {
+                // Presentation metadata must not enter middleware/model requests either.
+                beforeModel(request) {
+                  assert.ok(!JSON.stringify(request).includes("前端专用查询标题"));
+                  assert.ok(!JSON.stringify(request.context.tools).includes("displayName"));
+                  return request.context;
+                },
+              };
+            },
+          },
+        ],
         ctx.models,
         telemetry,
       );

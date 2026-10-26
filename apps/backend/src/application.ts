@@ -63,6 +63,7 @@ export async function createApplication(
 
     await mount(mcp, config.tools.mcp);
     await mount(toolsPlugin, {
+      sessions: ctx.sessions,
       definitions: overrides.tools,
       sources: [ctx.get("mcp")],
     });
@@ -107,6 +108,7 @@ export async function createApplication(
     http = createHttp({
       sessions: ctx.sessions,
       runtime,
+      businessTools: Boolean(config.tools.mcp) || Boolean(overrides.tools?.length),
       authenticate: createAuthenticator(config.auth),
     });
 

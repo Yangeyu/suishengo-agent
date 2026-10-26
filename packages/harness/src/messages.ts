@@ -4,7 +4,14 @@ export type JsonValue =
 export type AssistantPart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
-  | { type: "tool-call"; id: string; name: string; input: Record<string, JsonValue> };
+  | {
+      type: "tool-call";
+      id: string;
+      name: string;
+      /** Server-owned title captured with this call for presentation and replay. */
+      displayName?: string;
+      input: Record<string, JsonValue>;
+    };
 
 /** Adapter-owned replay data is internal; presentation adapters never forward it. */
 export interface MessageSource {

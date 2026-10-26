@@ -866,6 +866,9 @@
                     "state": {
                       "type": "string",
                       "const": "input-available"
+                    },
+                    "toolMetadata": {
+                      "$ref": "#/components/schemas/ToolPresentationMetadata"
                     }
                   },
                   "required": ["type", "toolCallId", "toolName", "input", "state"],
@@ -889,7 +892,10 @@
                       "type": "string",
                       "const": "output-available"
                     },
-                    "output": {}
+                    "output": {},
+                    "toolMetadata": {
+                      "$ref": "#/components/schemas/ToolPresentationMetadata"
+                    }
                   },
                   "required": ["type", "toolCallId", "toolName", "input", "state", "output"],
                   "additionalProperties": false
@@ -914,6 +920,9 @@
                     },
                     "errorText": {
                       "type": "string"
+                    },
+                    "toolMetadata": {
+                      "$ref": "#/components/schemas/ToolPresentationMetadata"
                     }
                   },
                   "required": ["type", "toolCallId", "toolName", "input", "state", "errorText"],
@@ -1070,6 +1079,9 @@
               "dynamic": {
                 "type": "boolean",
                 "const": true
+              },
+              "toolMetadata": {
+                "$ref": "#/components/schemas/ToolPresentationMetadata"
               }
             },
             "required": ["type", "toolCallId", "toolName", "input", "dynamic"],
@@ -1267,7 +1279,8 @@
             "type": "boolean"
           },
           "businessTools": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "是否配置业务工具；不包含默认启用的当前会话历史检索，不代表外部服务可用。"
           },
           "protocolVersion": {
             "type": "number",
@@ -1295,6 +1308,20 @@
           }
         },
         "required": ["error"],
+        "additionalProperties": false
+      },
+      "ToolPresentationMetadata": {
+        "type": "object",
+        "description": "调用时保存的前端展示信息；缺省时使用 toolName。",
+        "properties": {
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "服务端工具定义提供的纯文本标题，不用于工具调用或授权。"
+          }
+        },
+        "required": ["displayName"],
         "additionalProperties": false
       }
     }

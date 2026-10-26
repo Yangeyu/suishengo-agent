@@ -11,6 +11,8 @@ export type ChatSnapshot = Omit<SessionSnapshot, "turns"> & {
 const metadata = (runId: string): MessageMetadata => ({ runId, schemaVersion: 1 });
 const unknownResult = "运行已结束，工具执行结果未确认";
 const toolError = (output: unknown) => (typeof output === "string" ? output : "工具执行失败");
+const toolPresentation = (part: { displayName?: string }) =>
+  part.displayName ? { toolMetadata: { displayName: part.displayName } } : {};
 
 // Tool inputs become visible at message commit, after streamed content has been displayed.
 function presentationParts(message: Extract<AgentMessage, { role: "assistant" }>) {
@@ -30,6 +32,7 @@ function assistantParts(row: StoredMessage, assistantIndex: number): UIMessage["
         type: "dynamic-tool",
         toolCallId: part.id,
         toolName: part.name,
+        ...toolPresentation(part),
         input: part.input,
         state: "input-available",
       });
@@ -131,6 +134,7 @@ export function createUIStreamMapper(runId: string) {
           type: "tool-input-available",
           toolCallId: part.id,
           toolName: part.name,
+          ...toolPresentation(part),
           input: part.input,
           dynamic: true,
         });

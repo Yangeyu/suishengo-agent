@@ -56,7 +56,11 @@ export const pi = {
                       system: input.system,
                       summary: input.execution.history.summary?.text,
                       messages: messages.filter((message) => message.role !== "system").map(fromPi),
-                      tools: input.tools.definitions,
+                      tools: input.tools.definitions.map(({ name, description, inputSchema }) => ({
+                        name,
+                        description,
+                        inputSchema,
+                      })),
                     },
                   },
                   async (request, scope) => {

@@ -88,3 +88,38 @@ test("intercepted results must satisfy the tool output limit", async (t) => {
     code: "TOOL_OUTPUT_INVALID",
   });
 });
+
+test("tool sessions snapshot bounded plain-text titles without changing tool identifiers", async () => {
+  const ctx = new Context();
+  ctx.provide("telemetry", createTelemetry());
+  const titles = ["  查询资料  ", " ", "a\nb", "a\u2028b", "a\u202eb", "字".repeat(81), undefined];
+  const definitions = titles.map((displayName, index) => ({
+    name: "tool_" + index,
+    displayName,
+    description: "Model-only description",
+    inputSchema: { type: "object" },
+    effect: "read" as const,
+    timeoutMs: 1000,
+    authorize: () => true,
+    execute: async () => "ok",
+  }));
+  try {
+    await ctx.plugin(toolsPlugin, { definitions, sources: [] });
+    const context = {
+      actor: { userId: "test" },
+      runId: "run",
+      sessionId: "session",
+      signal: new AbortController().signal,
+    };
+    const first = await ctx.tools.open(context, 1);
+    definitions[0]!.displayName = "新标题";
+    const second = await ctx.tools.open(context, 1);
+    assert.equal(first.definitions[0]!.displayName, "查询资料");
+    assert.equal(second.definitions[0]!.displayName, "新标题");
+    assert.ok(first.definitions.slice(1).every((tool) => !("displayName" in tool)));
+    assert.equal(await first.invoke("call", "tool_0", {}), "ok");
+    await Promise.all([first.close(), second.close()]);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});

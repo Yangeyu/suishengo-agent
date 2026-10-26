@@ -229,6 +229,68 @@ export function createSessionStore(
       return publicRun(await ownRun(db, actor, runId));
     },
 
+    async search(actor, runId, input, signal) {
+      const query = input.query.trim();
+      const limit = input.limit ?? 5;
+      if (!query || query.length > 200 || !Number.isInteger(limit) || limit < 1 || limit > 10)
+        throw new ServiceError("INVALID_INPUT", "检索关键词应为 1–200 字符，数量应为 1–10");
+      signal.throwIfAborted();
+
+      return db.transaction(
+        async (tx) => {
+          // 查询有独立执行上限；会话和历史边界取自数据库中的已授权运行。
+          await tx.execute(sql`set local statement_timeout = '2000ms'`);
+          const run = await ownRun(tx, actor, runId);
+          const visible = tx
+            .select({
+              messageId: sql<string>`${messages.id}`.as("message_id"),
+              runId: sql<string>`${runs.id}`.as("run_id"),
+              position: runs.position,
+              ordinal: messages.ordinal,
+              role: sql<"user" | "assistant">`${messages.message}->>'role'`.as("role"),
+              text: sql<string>`case when ${messages.message}->>'role' = 'user'
+              then ${messages.message}->>'text'
+              else (select string_agg(part->>'text', E'\n' order by ordinal)
+                from jsonb_array_elements(${messages.message}->'content')
+                  with ordinality as parts(part, ordinal)
+                where part->>'type' = 'text') end`.as("text"),
+            })
+            .from(messages)
+            .innerJoin(runs, eq(runs.id, messages.runId))
+            .innerJoin(sessions, eq(sessions.id, runs.sessionId))
+            .where(
+              and(
+                eq(sessions.ownerId, actor.userId),
+                eq(runs.sessionId, run.sessionId),
+                lt(runs.position, run.position),
+                eq(runs.status, "completed"),
+                eq(messages.status, "complete"),
+                sql`${messages.message}->>'role' in ('user', 'assistant')`,
+              ),
+            )
+            .as("visible_messages");
+          // strpos 做字面量匹配，用户输入中的 %、_ 和 SQL 片段没有特殊含义。
+          const matchAt = sql<number>`strpos(lower(${visible.text}), lower(${query}))`;
+          const rows = await tx
+            .select({
+              messageId: visible.messageId,
+              runId: visible.runId,
+              position: visible.position,
+              role: visible.role,
+              excerpt: sql<string>`substring(${visible.text} from greatest(1, least(${matchAt} - 120, length(${visible.text}) - 999)) for 1000)`,
+              truncated: sql<boolean>`length(${visible.text}) > 1000`,
+            })
+            .from(visible)
+            .where(sql`${matchAt} > 0`)
+            .orderBy(desc(visible.position), desc(visible.ordinal))
+            .limit(limit + 1);
+          signal.throwIfAborted();
+          return { matches: rows.slice(0, limit), hasMore: rows.length > limit };
+        },
+        { isolationLevel: "repeatable read", accessMode: "read only" },
+      );
+    },
+
     async history(actor, run, range = {}) {
       const owned = await ownRun(db, actor, run.id);
       // Only complete turns enter the next request; interrupted tools are never silently retried.

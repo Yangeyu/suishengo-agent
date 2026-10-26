@@ -54,6 +54,21 @@ async function project(events: SessionEvent[]) {
   assert.deepEqual(snapshot.messages[1], JSON.parse(JSON.stringify(displayed)));
   assert.ok(!JSON.stringify(snapshot).includes("private-signature"));
   assert.ok(!JSON.stringify(chunks).includes("private-signature"));
+  for (const event of events) {
+    if (event.type !== "message" || event.message.role !== "assistant") continue;
+    for (const call of event.message.content) {
+      if (call.type !== "tool-call") continue;
+      const part = displayed?.parts.find(
+        (part) => part.type === "dynamic-tool" && part.toolCallId === call.id,
+      );
+      assert.ok(part?.type === "dynamic-tool");
+      assert.equal(part.toolName, call.name);
+      assert.deepEqual(
+        part.toolMetadata,
+        call.displayName ? { displayName: call.displayName } : undefined,
+      );
+    }
+  }
   return rows;
 }
 
@@ -73,7 +88,7 @@ test("committed core history and replay produce the same SDK message without exp
         role: "assistant",
         content: [
           { type: "reasoning", text: "consider" },
-          { type: "tool-call", id: "call", name: "lookup", input: {} },
+          { type: "tool-call", id: "call", name: "lookup", displayName: "查询资料", input: {} },
           { type: "text", text: "answer" },
         ],
         source: {
@@ -124,10 +139,36 @@ test("cancellation leaves pending tool effects unconfirmed", async () => {
       type: "message",
       message: {
         role: "assistant",
-        content: [{ type: "tool-call", id: "write", name: "reserve", input: {} }],
+        content: [
+          { type: "tool-call", id: "write", name: "reserve", displayName: "预订", input: {} },
+        ],
       },
     },
     { type: "run-end", status: "cancelled" },
   ]);
   assert.ok(waiting.every((row) => row.message.role !== "tool"));
+});
+
+test("legacy tool calls and failed results replay without presentation metadata", async () => {
+  await project([
+    { type: "run-start", runId: run.id },
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool-call", id: "legacy", name: "lookup", input: {} }],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "tool",
+        callId: "legacy",
+        name: "lookup",
+        output: "denied",
+        isError: true,
+      },
+    },
+    { type: "run-end", status: "completed" },
+  ]);
 });

@@ -27,6 +27,8 @@ pnpm dev
 
 Ctrl+C 停止应用；`pnpm infra:down` 停止本工程 PG，保留数据卷。
 
+默认内置 `search_current_session`，可按关键词找回当前会话中已完成对话的原文，包括摘要覆盖的历史；业务数据检索仍需外部工具接入。范围和限制见[当前会话检索](docs/integrations.md#当前会话检索)。
+
 ## 阅读入口
 
 | 需要完成的事情                               | 文档                                                               |

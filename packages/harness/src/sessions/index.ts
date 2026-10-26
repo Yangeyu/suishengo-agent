@@ -41,6 +41,18 @@ export interface SessionSnapshot {
   activeRun: Run | null;
 }
 
+export type SessionSearchResult = {
+  matches: {
+    messageId: string;
+    runId: string;
+    position: number;
+    role: "user" | "assistant";
+    excerpt: string;
+    truncated: boolean;
+  }[];
+  hasMore: boolean;
+};
+
 export interface Sessions {
   create(actor: Actor, title: string): Promise<SessionSummary>;
   list(actor: Actor): Promise<SessionSummary[]>;
@@ -50,6 +62,12 @@ export interface Sessions {
     input: { sessionId: string; requestId: string; text: string; userMessageId: string },
   ): Promise<{ run: Run; created: boolean }>;
   getRun(actor: Actor, runId: string): Promise<Run>;
+  search(
+    actor: Actor,
+    runId: string,
+    input: { query: string; limit?: number },
+    signal: AbortSignal,
+  ): Promise<SessionSearchResult>;
   history(
     actor: Actor,
     run: Run,

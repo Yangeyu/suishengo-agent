@@ -328,6 +328,8 @@ function MessagePart({ part }: { part: UIMessage<MessageMetadata>["parts"][numbe
   if (part.type === "text") return <p>{part.text}</p>;
   if (part.type !== "dynamic-tool") return null;
 
+  const displayName = part.toolMetadata?.displayName;
+  const title = typeof displayName === "string" && displayName.trim() ? displayName : part.toolName;
   const status =
     part.state === "output-available"
       ? "已完成"
@@ -338,8 +340,10 @@ function MessagePart({ part }: { part: UIMessage<MessageMetadata>["parts"][numbe
   return (
     <details className="tool-call" open={part.state === "output-error"}>
       <summary>
-        {part.toolName} · {status}
+        <span aria-hidden="true">🔧</span> {title} · {status}
       </summary>
+      <strong>工具标识</strong>
+      <code>{part.toolName}</code>
       <strong>输入</strong>
       <pre>{JSON.stringify(part.input, null, 2)}</pre>
       {part.state === "output-available" && (

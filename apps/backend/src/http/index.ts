@@ -43,6 +43,7 @@ const chatInput = z
 export function createHttp(deps: {
   sessions: Sessions;
   runtime: Runtime;
+  businessTools: boolean;
   authenticate(header?: string): Promise<Actor>;
 }) {
   const app = Fastify({
@@ -83,7 +84,7 @@ export function createHttp(deps: {
 
       api.get("/capabilities", async () => ({
         modelConfigured: deps.runtime.modelConfigured,
-        businessTools: deps.runtime.toolsConfigured,
+        businessTools: deps.businessTools,
         protocolVersion: 1,
       }));
 

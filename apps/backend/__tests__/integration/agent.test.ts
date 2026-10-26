@@ -154,7 +154,11 @@ test(
       }
       assert.ok(
         fixtures.requests.every(
-          (request) => request.tools.map((tool) => tool.function.name).join() === "mcp_lookup",
+          (request) =>
+            request.tools
+              .map((tool) => tool.function.name)
+              .sort()
+              .join() === "mcp_lookup,search_current_session",
         ),
       );
       const toolFollowup = fixtures.requests.find(

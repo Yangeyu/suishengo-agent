@@ -85,6 +85,9 @@ export function createRuntime(options: {
         options.limits.maxToolCalls,
         middleware.execution.tool,
       );
+      const toolTitles = new Map(
+        tools.definitions.map(({ name, displayName }) => [name, displayName]),
+      );
 
       await options.agent!.run({
         system: options.system,
@@ -95,6 +98,26 @@ export function createRuntime(options: {
         limits: options.limits,
         onEvent: async (event) => {
           signal.throwIfAborted();
+          if (event.type === "message" && event.message.role === "assistant") {
+            // Snapshot trusted definitions before commit; never accept an executor's title.
+            event = {
+              ...event,
+              message: {
+                ...event.message,
+                content: event.message.content.map((part) => {
+                  if (part.type !== "tool-call") return part;
+                  const displayName = toolTitles.get(part.name);
+                  return {
+                    type: part.type,
+                    id: part.id,
+                    name: part.name,
+                    input: part.input,
+                    ...(displayName ? { displayName } : {}),
+                  };
+                }),
+              },
+            };
+          }
           await options.sessions.append(run, event);
           if (event.type === "message" && event.message.role === "assistant") {
             const answer = event.message.content
@@ -191,7 +214,6 @@ export function createRuntime(options: {
   return {
     available: () => !closing && healthy,
     modelConfigured: Boolean(options.agent),
-    toolsConfigured: options.tools.configured,
 
     async submit(actor: Actor, input: Parameters<Sessions["admit"]>[1]) {
       const task = admit(actor, input);
