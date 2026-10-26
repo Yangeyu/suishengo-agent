@@ -22,7 +22,7 @@ backend 是唯一生产进程。frontend 是开发工作台；eval 是通过 HTT
 | `plugins/tools`、`plugins/mcp`         | 工具授权、参数校验、执行和远端身份委托                                                 |
 | `plugins/prompts`、`plugins/telemetry` | Prompt 加载、观测和 Langfuse 导出                                                      |
 
-模型连接和凭证由 `backend/config.ts` 读取、校验后注入；`backend/config.yaml` 拥有模型选择、上下文压缩和执行预算。默认通过 DashScope 调用与 agent-harness 相同的 `deepseek-v4.1-flash`。Pi 模型适配器只消费显式参数，直接调用单个 API 实现，不读取环境变量或维护额外的模型注册集合。
+模型连接和凭证由 `backend/config.ts` 读取、校验后注入；`backend/config.yaml` 拥有模型选择、上下文压缩和执行预算。默认通过百炼调用 `deepseek-v4.1-flash`，Provider ID 为 `dashscope`。`plugins/pi/src/model/providers/bailian.ts` 使用 Pi 原生 `createProvider()` 定义端点、显式注入的认证和模型目录；模型窗口、能力上限及兼容参数由该目录维护。应用组装 Provider，Pi 模型适配器使用实例内的 `createModels()` 注册和选择模型，再通过集合调用 `openai-completions`。插件不读取环境变量，不使用全局注册状态。对话和摘要继续经过 runtime 模型 middleware；harness 不依赖 Pi 类型。
 
 Cordis 负责资源生命周期和组装。运行逻辑通过显式契约使用能力，核心不依赖应用或插件。后端的 AI SDK 消息依赖只位于 HTTP 边界；前端直接消费 SDK 协议。PG 不定义展示规则，Pi 不写数据库或 HTTP 响应。
 
@@ -51,7 +51,7 @@ packages/harness/src/
 
 `scope`、`messages` 和 `errors` 是基础定义，不依赖执行能力。events 依赖消息；sessions 依赖身份、消息和事件；models 与 tools 不依赖 execution。context 使用模型输入和历史轮次，execution 组合这些能力。类型导入也遵循此方向，避免模型、工具与 middleware 互相引用。
 
-`RunScope` 只传递可信身份、运行标识、取消信号和预算。runtime 创建每次运行的作用域和历史快照，将它们分别交给 middleware；`AgentExecution` 提供作用域、历史和受控调用，执行器不再另收一套身份或取消参数。Tools 只接收自身定义的调用拦截函数，无需了解整个 AgentExecution。
+`RunScope` 只传递可信身份、运行标识、取消信号和预算。runtime 创建每次运行的作用域和历史快照，将它们分别交给 middleware；`AgentExecution` 提供作用域、历史和受控调用。Tools 只接收自身定义的调用拦截函数，无需了解整个 AgentExecution。
 
 `StoredMessage`、`HistoryTurn` 属于 sessions，`AgentMessage` 只描述消息内容，`ModelInput` 描述一次模型请求的输入。PG 通过 `sessions/state` 应用消息规则，事务仍由 PG 实现负责；核心规则不依赖 Drizzle。服务通过 `ServiceError` 报告错误码，HTTP 在 `http/errors.ts` 将错误码映射为响应状态。
 
@@ -154,7 +154,7 @@ PG 拥有持久化消息、运行终态与重放事实，Langfuse 不承担恢�
 
 ## Agent Middleware
 
-扩展采用 Agent 专用 Middleware；组织方式参考 LangChain，但不兼容其 graph state、Command 或内置 middleware。Pi 原生 hooks 仅作为内部适配点。应用在 `application.ts` 维护一个有序的 middleware 列表；新增策略只需实现并注册。契约见 [harness/execution/middleware.ts](../packages/harness/src/execution/middleware.ts)，组合实现归 [runtime/middleware.ts](../packages/runtime/src/middleware.ts)。
+Agent Middleware 定义运行、模型和工具调用的扩展点，Pi 原生 hooks 由适配层连接到这些扩展点。应用在 `application.ts` 维护一个有序的 middleware 列表；新增策略只需实现并注册。契约见 [harness/execution/middleware.ts](../packages/harness/src/execution/middleware.ts)，组合实现归 [runtime/middleware.ts](../packages/runtime/src/middleware.ts)。
 
 | Hook            | 语义                                                                |
 | --------------- | ------------------------------------------------------------------- |
@@ -200,7 +200,7 @@ Pi 内部直接转发原生流；middleware 控制请求与调用，不将流拆
 
 上下文压缩是独立的 `context-compaction` middleware。每次推理从 canonical 消息建立请求视图，依次处理历史摘要、近期完整对话及本轮工具结果。摘要作为背景数据发送，不作为新的产品指令；原始核心消息与事件重放保持完整。
 
-模型窗口、单次输出额度和整次运行消耗分别配置。当前输入估算使用 UTF-8 字节数加消息开销，包含工具 schema，属于保守估算，不是服务商精确 token 计数。实际 usage（包括摘要）计入运行预算。最终检查在所有请求转换之后执行，必要输入仍无法容纳时明确失败。
+Provider 模型定义声明窗口和输出能力，应用配置单次输出额度及整轮 token 预算。当前输入估算使用 UTF-8 字节数加消息开销，包含工具 schema，属于保守估算，不是服务商精确 token 计数。实际 usage（包括摘要）计入运行预算。最终检查在所有请求转换之后执行，必要输入仍无法容纳时明确失败。
 
 摘要分批生成，保留当前用户输入及最近完整交互；工具调用与结果作为整体处理。摘要调用使用 `purpose: compaction`，共用模型执行 middleware，但跳过对话的 beforeModel/afterModel，避免递归压缩。摘要失败时，如果输入仍可容纳则继续；否则按完整旧交互裁剪，并记录诊断。这种有损回退仅用于当前运行，不写入持久摘要；它不能保证保留被裁剪的事实。
 

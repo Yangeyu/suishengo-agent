@@ -105,7 +105,7 @@ test("committed core history and replay produce the same SDK message without exp
   ]);
 });
 
-test("cancellation preserves partial content and unconfirmed tool effects without inventing a tool result", async () => {
+test("cancellation preserves partial assistant content", async () => {
   const rows = await project([
     { type: "run-start", runId: run.id },
     { type: "step-start", step: 1 },
@@ -114,7 +114,9 @@ test("cancellation preserves partial content and unconfirmed tool effects withou
     { type: "run-end", status: "cancelled" },
   ]);
   assert.equal(rows.at(-1)?.status, "interrupted");
+});
 
+test("cancellation leaves pending tool effects unconfirmed", async () => {
   const waiting = await project([
     { type: "run-start", runId: run.id },
     { type: "step-start", step: 1 },

@@ -4,22 +4,22 @@ import type { RunScope } from "@harness/scope";
 import { Type } from "typebox";
 import type { Context } from "@deepseek-ai/cordis";
 import {
-  normalizeContext,
+  createModels,
+  type Api,
   type Model,
+  type Provider,
   type Message,
   type AssistantMessageEvent,
 } from "@earendil-works/pi-ai";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 
 import { assistantMessage, toPi } from "@plugins/pi/src/messages";
-import type { PiModelOptions } from "@plugins/pi/src/model/config";
 
 type Completion = Extract<AssistantMessageEvent, { type: "done" }> & {
   completionStartTime?: number;
 };
 
 interface PiModel {
-  model: Model<"openai-completions">;
+  model: Model<Api>;
   call(
     request: ModelRequest,
     scope: RunScope,
@@ -52,28 +52,24 @@ export function modelResult(event: Completion): ModelResult {
 
 export const piModels = {
   name: "pi-models",
-  apply(ctx: Context, options: PiModelOptions) {
-    const model: Model<"openai-completions"> = {
-      id: options.modelId,
-      name: options.modelId,
-      provider: options.provider,
-      api: "openai-completions",
-      baseUrl: options.baseUrl,
-      reasoning: options.reasoning,
-      input: ["text"],
-      compat: options.compat,
-      contextWindow: options.contextWindow,
-      maxTokens: options.maxOutputTokens,
-      // SDK 要求价格字段；实际费用由观测平台的模型价格映射计算。
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    };
+  apply(ctx: Context, options: { provider: Provider; modelId: string; maxOutputTokens: number }) {
+    const collection = createModels();
+    collection.setProvider(options.provider);
+    const model = collection.getModel(options.provider.id, options.modelId);
+    if (!model) throw new ServiceError("MODEL_UNKNOWN", "模型未配置");
+    if (
+      !Number.isInteger(options.maxOutputTokens) ||
+      options.maxOutputTokens < 1 ||
+      options.maxOutputTokens > model.maxTokens ||
+      options.maxOutputTokens >= model.contextWindow
+    )
+      throw new Error("Model output limit exceeds the supported model capability");
 
     const info = Object.freeze({
       id: model.id,
       contextWindow: model.contextWindow,
-      maxOutputTokens: model.maxTokens,
+      maxOutputTokens: options.maxOutputTokens,
     });
-    const api = openAICompletionsApi();
 
     const native: PiModel = {
       model,
@@ -111,13 +107,16 @@ export const piModels = {
           let completed: Completion | undefined;
           let completionStartTime: number | undefined;
 
-          for await (const event of api.streamSimple(model, normalizeContext({ messages }), {
-            apiKey: options.apiKey,
-            signal,
-            maxTokens: request.maxOutputTokens,
-            maxRetries: 0,
-            cacheRetention: "none",
-          })) {
+          for await (const event of collection.streamSimple(
+            model,
+            { messages },
+            {
+              signal,
+              maxTokens: request.maxOutputTokens,
+              maxRetries: 0,
+              cacheRetention: "none",
+            },
+          )) {
             signal.throwIfAborted();
             if (event.type === "error") throw new ServiceError("MODEL_FAILED", "模型调用失败");
 

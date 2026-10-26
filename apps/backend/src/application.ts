@@ -6,6 +6,7 @@ import { createRuntime } from "@runtime";
 import { sessionsPg } from "@plugins/sessions-pg/src/index";
 import { pi } from "@plugins/pi/src/loop/index";
 import { piModels } from "@plugins/pi/src/model/index";
+import { createBailianProvider } from "@plugins/pi/src/model/providers/bailian";
 import { createContexts } from "@plugins/context/src/index";
 import { contextCompaction } from "@plugins/context/src/compaction";
 
@@ -66,7 +67,17 @@ export async function createApplication(
       sources: [ctx.get("mcp")],
     });
 
-    await mount(piModels, config.model);
+    await mount(
+      piModels,
+      config.model && {
+        provider: createBailianProvider({
+          apiKey: config.model.apiKey,
+          baseUrl: config.model.baseUrl,
+        }),
+        modelId: config.model.modelId,
+        maxOutputTokens: config.model.maxOutputTokens,
+      },
+    );
     if (overrides.agent) ctx.provide("agent", overrides.agent);
     else if (config.model) await mount(pi, undefined);
 

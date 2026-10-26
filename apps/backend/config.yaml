@@ -1,21 +1,9 @@
-# 模型服务地址和凭据由 DASHSCOPE_BASE_URL、DASHSCOPE_API_KEY 提供。
+# 百炼默认使用北京接口，只需 DASHSCOPE_API_KEY；DASHSCOPE_BASE_URL 可覆盖地址。
 # 仅管理会话时设为 model: false；production 必须启用模型。
 model:
   provider: dashscope
   modelId: deepseek-v4.1-flash
-  contextWindow: 131072
   maxOutputTokens: 4096
-  reasoning: true
-  compat:
-    supportsStore: false
-    supportsDeveloperRole: false
-    supportsStrictMode: false
-    supportsUsageInStreaming: true
-    supportsReasoningEffort: true
-    supportsLongCacheRetention: false
-    maxTokensField: max_tokens
-    thinkingFormat: qwen
-    requiresReasoningContentOnAssistantMessages: true
 
 context:
   compaction:

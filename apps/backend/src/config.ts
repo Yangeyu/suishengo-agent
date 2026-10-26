@@ -5,19 +5,14 @@ import { authOptionsSchema } from "@backend/http/auth";
 import { runtimeOptionsSchema } from "@runtime/config";
 import { compactionPolicySchema } from "@plugins/context/src/compaction";
 import { mcpOptionsSchema } from "@plugins/mcp/src/index";
-import { piModelOptionsSchema } from "@plugins/pi/src/model/config";
+import { piModelOptionsSchema, piModelSelectionSchema } from "@plugins/pi/src/model/config";
 import { remotePromptSchema } from "@plugins/prompts/src/index";
 import { postgresOptionsSchema } from "@plugins/sessions-pg/src/index";
 import { telemetryOptionsSchema } from "@plugins/telemetry/src/index";
 
 const optional = (value?: string) => value?.trim() || undefined;
 const fileSchema = z.strictObject({
-  model: z
-    .union([
-      z.literal(false),
-      z.strictObject(piModelOptionsSchema.shape).omit({ baseUrl: true, apiKey: true }),
-    ])
-    .default(false),
+  model: z.union([z.literal(false), piModelSelectionSchema]).default(false),
   context: z
     .strictObject({
       compaction: z.union([z.literal(false), compactionPolicySchema]).default(false),

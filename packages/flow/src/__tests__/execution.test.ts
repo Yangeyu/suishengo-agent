@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pipeline, policy, TimeoutError, delay } from "@flow";
 
-test("timeouts settle before retry and cancellation prevents later stages", async () => {
+test("timeouts settle before the next retry starts", async () => {
   const order: string[] = [];
   let attempts = 0;
   const task = policy(async (_: undefined, execution) => {
@@ -23,7 +23,9 @@ test("timeouts settle before retry and cancellation prevents later stages", asyn
 
   await assert.rejects(task(undefined), TimeoutError);
   assert.deepEqual(order, ["start1", "end1", "start2", "end2"]);
+});
 
+test("cancellation prevents later pipeline stages", async () => {
   const controller = new AbortController();
   let entered = false;
   const flow = pipeline(

@@ -19,13 +19,33 @@ JWT 必须包含 `sub`、`iat`，issuer 与 audience 必须匹配；`sub` 为服
 
 ## 模型与执行策略
 
-[backend/config.yaml](../apps/backend/config.yaml) 拥有模型选择、协议参数、上下文压缩、执行预算、MCP 工具白名单和远程 Prompt 版本。默认模型为 `deepseek-v4.1-flash`，上下文窗口 131072，输出上限 4096；模型调用保留 Qwen thinking 格式及 assistant reasoning_content 回传要求，不指定推理强度。
+模型接入在 `.env` 中填写 `DASHSCOPE_API_KEY`。[百炼 Provider](../plugins/pi/src/model/providers/bailian.ts) 默认使用北京接口 `https://dashscope.aliyuncs.com/compatible-mode/v1`，其他地域或专属端点通过 `DASHSCOPE_BASE_URL` 指定。地址与密钥必须匹配地域和计费方案，参见 [DashScope 地址说明](https://help.aliyun.com/zh/model-studio/base-url)。
 
-`.env` 提供 `DASHSCOPE_BASE_URL` 和 `DASHSCOPE_API_KEY`；示例使用北京接口 `https://dashscope.aliyuncs.com/compatible-mode/v1`。地址与密钥必须属于相应地域和计费方案，参见 [DashScope 地址说明](https://help.aliyun.com/zh/model-studio/base-url)。更换模型时修改 YAML 的 `model.modelId`，同时检查窗口、输出上限与协议参数，不自动探测能力。应用读取并校验凭据后传入 Pi 插件，插件不读取环境变量。
+[backend/config.yaml](../apps/backend/config.yaml) 中的模型配置为：
 
-`model: false` 表示只管理会话、不启用模型；production 要求启用模型。启用模型但缺少地址或密钥时启动失败。`context.compaction: false` 关闭压缩；默认策略触发比例 0.7，优先保留近期 2 轮完整交互，摘要上限 1024 tokens。每轮默认最多 8 个模型步骤、12 次工具调用、32000 tokens；预算包含对话与摘要。运行预算不足时会提前触发压缩，硬窗口压力下可减少保留的旧交互。摘要使用同一模型，不使用业务工具。
+```yaml
+model:
+  provider: dashscope
+  modelId: deepseek-v4.1-flash
+  maxOutputTokens: 4096
+```
 
-上下文最终检查使用保守 UTF-8 字节估算，不是服务商 tokenizer。压缩不保证事实无损，原始历史始终保留；实际质量仍需模型评估。执行与持久化语义见[架构设计](architecture.md)。
+`provider` 和 `modelId` 选择 Provider 目录中的模型，`maxOutputTokens` 设置应用单次输出额度。当前目录支持 `deepseek-v4.1-flash`，声明上下文窗口 131072、输出上限 4096。窗口、reasoning 能力和协议兼容参数由模型定义维护；接入新模型时验证其能力与协议，再加入目录。
+
+启动时校验模型选择、凭据、地址及输出额度。`model: false` 仅启用会话管理，production 要求启用模型。配置来源和运行边界见[架构设计](architecture.md#模块归属)。
+
+上下文压缩和执行预算也在 YAML 中配置：
+
+| 配置                  | 默认行为                                                                 |
+| --------------------- | ------------------------------------------------------------------------ |
+| `context.compaction`  | 触发比例 0.7，优先保留近期 2 轮，摘要上限 1024 tokens；设为 `false` 关闭 |
+| `runtime.limits`      | 每轮最多 8 个模型步骤、12 次工具调用、32000 tokens                       |
+| `runtime.concurrency` | 全局最多 8 个运行，每个用户最多 2 个                                     |
+| `runtime.timeoutMs`   | 每轮 120000 毫秒                                                         |
+
+对话和摘要共用模型与运行 token 预算，摘要不调用业务工具。预算不足可提前触发压缩，窗口不足时可减少保留的旧交互。上下文大小使用保守 UTF-8 字节估算；压缩可能损失信息，原始历史保留在数据库。具体算法与持久化规则见[上下文与摘要](architecture.md#上下文与摘要)。
+
+真实模型联调使用有权限的测试密钥，验证文本、reasoning、工具往返、usage 和取消。`pnpm eval` 的运行方式和验证边界见[开发约定](development.md#真实模型冒烟)。
 
 ## 配置文件与部署参数
 
@@ -43,27 +63,23 @@ JWT 必须包含 `sub`、`iat`，issuer 与 audience 必须匹配；`sub` 为服
 | `APP_RELEASE`              | 无                                   | 观测中的 commit 或镜像版本                 |
 | `LANGFUSE_CAPTURE_CONTENT` | production 为 false，其他环境为 true | 部署环境是否允许采集经过大小限制的输入输出 |
 
-并发额度位于 `runtime.concurrency.global/perUser`，超时位于 `runtime.timeoutMs`，执行预算位于 `runtime.limits`。配置文件只选择已有能力及参数，插件依赖与挂载顺序由 `application.ts` 管理。
+配置文件选择能力及参数，插件依赖与挂载顺序由 `application.ts` 管理。
 
 远程 Prompt 和 MCP 的条件配置见下文。frontend 的 `AGENT_ACCESS_TOKEN` 和 `BACKEND_URL`（默认 `http://127.0.0.1:4400`）、eval 的 `EVAL_BASE_URL` / `EVAL_TOKEN`、集成测试的 `TEST_DATABASE_URL` 分别属于对应入口；生产 Compose 的 `BACKEND_IMAGE` 和可选 `HTTP_PORT` 属于部署配置。
 
-本地协议测试验证文本、reasoning、工具往返、usage 和取消；真实 DashScope 联调需使用有模型权限的密钥。`pnpm eval` 是 HTTP 冒烟，不证明业务答案质量，执行预算也不替代供应商计费或额度控制。
-
 ## 产品 Prompt 与 Langfuse
 
-产品 Prompt 默认来自 [backend/agent/prompts.ts](../apps/backend/src/agent/prompts.ts)。将 YAML 的 `prompts.remote` 设置为包含 `name` 和正整数 `version` 的对象后，在启动时加载固定版本的 text Prompt；远程读取失败会阻止启动。
+产品 Prompt 默认来自 [backend/agent/prompts.ts](../apps/backend/src/agent/prompts.ts)。YAML 的 `prompts.remote` 可指定 text Prompt 的 `name` 和正整数 `version`；服务在启动时读取该固定版本，读取失败会阻止启动。
 
-Langfuse 使用 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`，三者全部留空表示不启用外部观测；部分配置会启动失败。远程 Prompt 还要求完整的 Langfuse 连接配置。
+Langfuse 连接需要完整的 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY` 和 `LANGFUSE_SECRET_KEY`。三项全部留空时关闭外部导出，部分配置会启动失败；远程 Prompt 也需要这组连接参数。部署前核对所选 Langfuse 服务版本与工程锁定 SDK 的兼容性。
 
 观测按 Run → Step → Operation 建立层级，记录实际触发的上下文压缩与摘要保存、摘要及对话模型调用、工具调用；运行终态与提交失败记录在 Run 上。generation 记录标准模型字段、实际 usage、首个生成内容时间、结束原因及最终 system 文本哈希。远程 Prompt 的名称和固定版本随请求关联到对话 generation；摘要调用不冒用产品 Prompt 版本。无价格配置时不主动上报零费用，平台费用推算仍需正确的模型价格映射。
 
 `NODE_ENV` 作为观测环境；可选 `APP_RELEASE` 标识 commit 或镜像版本。会话和运行关联传播到每个节点，Step 与 toolCall 关联在相应作用域内传播。当前不上报用户标识，只保留业务查询所需的 runId/sessionId。
 
-`LANGFUSE_CAPTURE_CONTENT` 控制输入输出记录：development/test 默认 true，production 默认 false，可显式覆盖。Run 记录当前用户问题和已提交回答；generation 记录带明确角色的请求消息与模型输出；工具记录参数与结果。Telemetry 的 `content` 策略入口统一控制内容处理，限制单字段 64 KiB，并屏蔽常见凭证字段；普通长文本保留截断预览。metadata 限制深度、条目数和大小，并屏蔽常见凭证字段；这不等价于任意业务正文的自动脱敏。新增业务指标作为所属操作 metadata，无需增加 Langfuse 字段映射。
+`LANGFUSE_CAPTURE_CONTENT` 在 development/test 默认开启，在 production 默认关闭。开启后记录用户问题、回答、模型消息与工具参数和结果。结构化内容在序列化前屏蔽常见凭据字段，并限制深度、条目数和单字段大小；这些规则不保证任意业务正文都已脱敏。模型实际请求不受观测内容处理影响。
 
-模块测试验证模拟 OTLP 接收端上的并发父子关系、压缩嵌套、usage、Prompt 关联、字段传播、取消/拒绝、记录失败、导出拒绝和终态提交失败。是否成功写入既有平台，仍必须核对部署服务与锁定 SDK 的兼容性，并在专用测试项目回读对应 runId 的 trace。配置存在或日志输出不代表 Langfuse 已接收数据；当前没有持久化导出重试队列或投递保证。
-
-开发实例准备见[开发环境](../deploy/development/README.md)。验证远程 Prompt 时创建测试 text Prompt 并固定版本，启动服务后确认该版本实际生效；不要把最新标签当成固定版本。
+观测导出不提供持久化队列或送达保证。平台联调在专用测试项目中按 runId 回读 Run、Step、generation 和 tool，检查父子关系、输入输出、usage、Prompt 版本，并按 purpose/status/stepId 筛选。模拟 OTLP 接收成功只验证本地导出协议。远程 Prompt 联调需确认配置的固定版本实际生效。开发实例准备见[开发环境](../deploy/development/README.md)。
 
 ## MCP 与业务工具
 

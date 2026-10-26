@@ -82,27 +82,17 @@ function setup() {
       tools: [],
     },
   };
-  return { saved, requests, models, store, controller, scope, conversation, request };
+  const create = () =>
+    contextCompaction({ store, policy }).create(scope, {
+      history: conversation,
+      telemetry,
+      models: { resolve: models.resolve, generate: (request) => models.generate(request, scope) },
+    });
+  return { saved, requests, models, store, controller, scope, conversation, request, create };
 }
 
-test("compaction preserves canonical history and current input; only completed history becomes a durable summary", async () => {
-  const f = setup();
-  const original = structuredClone(f.request.context.messages);
-  const instance = await contextCompaction({ store: f.store, policy }).create(f.scope, {
-    history: f.conversation,
-    telemetry,
-    models: {
-      resolve: f.models.resolve,
-      generate: (request) => f.models.generate(request, f.scope),
-    },
-  });
-  const prepared = await instance.beforeModel!(f.request);
-  assert.ok(prepared.messages.length < original.length);
-  assert.equal(prepared.messages.at(-1)?.role, "user");
-  assert.deepEqual(f.request.context.messages, original);
-  assert.equal(f.saved.length, 0);
-
-  const current: AgentMessage[] = Array.from({ length: 4 }, (_, index) => [
+function toolHistory(): AgentMessage[] {
+  return Array.from({ length: 4 }, (_, index) => [
     {
       role: "assistant" as const,
       content: [{ type: "tool-call" as const, id: "call-" + index, name: "lookup", input: {} }],
@@ -115,6 +105,19 @@ test("compaction preserves canonical history and current input; only completed h
       isError: false,
     },
   ]).flat();
+}
+
+test("compaction preserves canonical history and current input; only completed history becomes a durable summary", async () => {
+  const f = setup();
+  const original = structuredClone(f.request.context.messages);
+  const instance = await f.create();
+  const prepared = await instance.beforeModel!(f.request);
+  assert.ok(prepared.messages.length < original.length);
+  assert.equal(prepared.messages.at(-1)?.role, "user");
+  assert.deepEqual(f.request.context.messages, original);
+  assert.equal(f.saved.length, 0);
+
+  const current = toolHistory();
   const next = await instance.beforeModel!({
     ...f.request,
     context: { ...f.request.context, messages: [...original, ...current] },
@@ -134,16 +137,9 @@ test("compaction preserves canonical history and current input; only completed h
   assert.ok(f.saved[0]!.throughPosition < 10);
 });
 
-test("cancelled compaction cannot save a summary; oversized mandatory context fails before provider execution", async () => {
+test("cancelled compaction cannot save a summary", async () => {
   const f = setup();
-  const instance = await contextCompaction({ store: f.store, policy }).create(f.scope, {
-    history: f.conversation,
-    telemetry,
-    models: {
-      resolve: f.models.resolve,
-      generate: (request) => f.models.generate(request, f.scope),
-    },
-  });
+  const instance = await f.create();
   await instance.beforeModel!(f.request);
   f.controller.abort();
   await assert.rejects(
@@ -153,7 +149,9 @@ test("cancelled compaction cannot save a summary; oversized mandatory context fa
     { name: "AbortError" },
   );
   assert.equal(f.saved.length, 0);
+});
 
+test("oversized mandatory context fails before provider execution", async () => {
   const other = setup();
   other.conversation.turns = [
     {
@@ -186,19 +184,12 @@ test("cancelled compaction cannot save a summary; oversized mandatory context fa
   }
 });
 
-test("summary failure keeps a fitting view; lossy fallback invalidates earlier and later durable summaries", async () => {
+test("summary failure preserves context that still fits the window", async () => {
   const soft = setup();
   soft.models.generate = async () => {
     throw new Error("summary unavailable");
   };
-  const softInstance = await contextCompaction({ store: soft.store, policy }).create(soft.scope, {
-    history: soft.conversation,
-    telemetry,
-    models: {
-      resolve: soft.models.resolve,
-      generate: (request) => soft.models.generate(request, soft.scope),
-    },
-  });
+  const softInstance = await soft.create();
   const fittingRequest = {
     ...soft.request,
     model: {
@@ -210,16 +201,11 @@ test("summary failure keeps a fitting view; lossy fallback invalidates earlier a
   assert.deepEqual(unchanged.messages, soft.request.context.messages);
   await softInstance.afterAgent!();
   assert.equal(soft.saved.length, 0);
+});
 
+test("lossy fallback invalidates pending and subsequent durable summaries", async () => {
   const hard = setup();
-  const hardInstance = await contextCompaction({ store: hard.store, policy }).create(hard.scope, {
-    history: hard.conversation,
-    telemetry,
-    models: {
-      resolve: hard.models.resolve,
-      generate: (request) => hard.models.generate(request, hard.scope),
-    },
-  });
+  const hardInstance = await hard.create();
   await hardInstance.beforeModel!(hard.request);
   const generate = hard.models.generate;
   let attempts = 0;
@@ -227,19 +213,7 @@ test("summary failure keeps a fitting view; lossy fallback invalidates earlier a
     if (++attempts === 1) throw new Error("summary unavailable");
     return generate(request, scope);
   };
-  const current: AgentMessage[] = Array.from({ length: 4 }, (_, index) => [
-    {
-      role: "assistant" as const,
-      content: [{ type: "tool-call" as const, id: "call-" + index, name: "lookup", input: {} }],
-    },
-    {
-      role: "tool" as const,
-      callId: "call-" + index,
-      name: "lookup",
-      output: "CURRENT_TOOL" + "x".repeat(250),
-      isError: false,
-    },
-  ]).flat();
+  const current = toolHistory();
   const messages = [...hard.request.context.messages, ...current];
   const prepared = await hardInstance.beforeModel!({
     ...hard.request,

@@ -19,6 +19,17 @@ const request: ModelRequest = {
     tools: [{ name: "lookup", description: "read", inputSchema: { type: "object" } }],
   },
 };
+const models: Models = {
+  resolve: () => model,
+  async generate() {
+    return {
+      message: { role: "assistant", content: [] },
+      finishReason: "stop",
+      usage: { input: 0, output: 0, total: 0 },
+    };
+  },
+};
+
 function scope(userId: string, signal = new AbortController().signal): RunScope {
   return {
     actor: { userId },
@@ -29,7 +40,6 @@ function scope(userId: string, signal = new AbortController().signal): RunScope 
   };
 }
 
-// Registration-only extension: no runtime or Pi modifications for request, model and tool policies.
 test("middleware composes in order, isolates concurrent state, and closes provider before final hooks", async () => {
   const events: string[] = [];
   const models: Models = {
@@ -130,7 +140,7 @@ test("middleware composes in order, isolates concurrent state, and closes provid
     );
 });
 
-test("late wrapper failures suppress final commit; cancellation closes streams and failed setup disposes instances", async () => {
+test("wrapper failures propagate after the provider has closed", async (t) => {
   let closed = 0;
   const models: Models = {
     resolve: () => model,
@@ -163,15 +173,13 @@ test("late wrapper failures suppress final commit; cancellation closes streams a
     models,
     telemetry,
   );
-  let finals = 0;
-  await assert.rejects(async () => {
-    await run.execution.model(request);
-    finals++;
-  }, /late failure/);
-  assert.equal(finals, 0);
+  t.after(() => run.close());
+  await assert.rejects(run.execution.model(request), /late failure/);
   assert.equal(closed, 1);
   await run.close();
+});
 
+test("failed setup disposes initialized middleware", async () => {
   let disposed = 0;
   await assert.rejects(
     openMiddleware(
@@ -199,24 +207,16 @@ test("late wrapper failures suppress final commit; cancellation closes streams a
     /setup/,
   );
   assert.equal(disposed, 1);
-
-  const cancelled = await openMiddleware(scope("alice"), history, [], models, telemetry);
-  cancelled.execution.abort();
-  await assert.rejects(cancelled.execution.model(request), { name: "AbortError" });
-  await cancelled.close();
 });
 
-test("tool execution cannot repeat or widen a prepared grant; notifications do not delay the run", async () => {
-  const models: Models = {
-    resolve: () => model,
-    async generate() {
-      return {
-        message: { role: "assistant", content: [] },
-        finishReason: "stop",
-        usage: { input: 0, output: 0, total: 0 },
-      };
-    },
-  };
+test("cancellation prevents model execution", async (t) => {
+  const cancelled = await openMiddleware(scope("alice"), history, [], models, telemetry);
+  t.after(() => cancelled.close());
+  cancelled.execution.abort();
+  await assert.rejects(cancelled.execution.model(request), { name: "AbortError" });
+});
+
+test("tool middleware cannot repeat or widen a prepared grant", async (t) => {
   const run = await openMiddleware(
     scope("alice"),
     history,
@@ -234,6 +234,7 @@ test("tool execution cannot repeat or widen a prepared grant; notifications do n
     models,
     telemetry,
   );
+  t.after(() => run.close());
   await run.execution.model(request);
   let writes = 0;
   await assert.rejects(
@@ -248,7 +249,9 @@ test("tool execution cannot repeat or widen a prepared grant; notifications do n
     run.execution.tool({ name: "unlisted", callId: "2", input: {} }, async () => "bad"),
     { code: "TOOL_FORBIDDEN" },
   );
-  await run.close();
+});
+
+test("tool middleware can handle an execution failure", async (t) => {
   const recovery = await openMiddleware(
     scope("alice"),
     history,
@@ -269,6 +272,7 @@ test("tool execution cannot repeat or widen a prepared grant; notifications do n
     models,
     telemetry,
   );
+  t.after(() => recovery.close());
   await recovery.execution.model(request);
   assert.deepEqual(
     await recovery.execution.tool({ name: "lookup", callId: "3", input: {} }, async () => {
@@ -276,7 +280,9 @@ test("tool execution cannot repeat or widen a prepared grant; notifications do n
     }),
     { handled: true },
   );
-  await recovery.close();
+});
+
+test("run observers do not block execution", async () => {
   let observed = false;
   notifyRun(
     [

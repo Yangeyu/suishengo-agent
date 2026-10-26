@@ -7,17 +7,13 @@ import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { createApplication } from "@backend/application";
 import { resolveConfig } from "@backend/config";
-import { migrateDatabase } from "@plugins/sessions-pg/src/migrate";
-
-const databaseUrl = process.env.TEST_DATABASE_URL;
+import { databaseUrl, prepareDatabase } from "@backend-tests/integration/database";
 
 test(
   "PG compaction: full history, checkpoint reuse, isolation, stale revision and cancellation",
   { skip: !databaseUrl, timeout: 30000 },
   async () => {
-    if (!new URL(databaseUrl!).pathname.endsWith("_test"))
-      throw new Error("Use a dedicated _test database");
-    await migrateDatabase(databaseUrl!);
+    await prepareDatabase();
     const requests: { messages: { role: string; content: string }[] }[] = [];
     let hold = false;
     let started: (() => void) | undefined;
@@ -56,15 +52,15 @@ test(
     const config = resolveConfig(
       {
         model: {
-          provider: "fixture",
-          modelId: "fixture",
-          contextWindow: 4096,
+          provider: "dashscope",
+          modelId: "deepseek-v4.1-flash",
           maxOutputTokens: 256,
         },
         context: {
           compaction: {
             maxSummaryTokens: 128,
-            triggerFraction: 0.5,
+            // 使用真实 Provider 的窗口，通过低阈值触发小规模测试历史的压缩。
+            triggerFraction: 0.01,
             keepRecentTurns: 1,
           },
         },

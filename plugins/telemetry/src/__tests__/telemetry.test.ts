@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { gunzipSync } from "node:zlib";
@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createTelemetry } from "@plugins/telemetry/src/index";
 import { contextCompaction } from "@plugins/context/src/compaction";
 import { openMiddleware } from "@runtime/middleware";
-import { ServiceError, type Sessions, type Run } from "@harness";
+import { ServiceError, type Sessions, type Run, type JsonValue } from "@harness";
 import { createRuntime } from "@runtime";
 import { logger } from "@logging";
 
@@ -59,7 +59,7 @@ async function collect() {
 }
 
 test(
-  "concurrent steps retain parentage across compaction, model calls and tool failures; metadata and usage export without content",
+  "concurrent runs preserve observation parentage and export metadata without content",
   { timeout: 10000 },
   async () => {
     const receiver = await collect();
@@ -281,101 +281,113 @@ test(
   },
 );
 
-test(
-  "recording and export failures preserve business results; failed finalization cannot produce a completed run trace",
-  { timeout: 10000 },
-  async () => {
-    const receiver = await collect();
-    let contentCalls = 0;
-    const telemetry = createTelemetry({
-      connection: receiver.connection,
-      content: () => {
-        contentCalls++;
-        throw new Error("redaction unavailable");
-      },
-    });
-    const level = logger.level;
-    logger.level = "silent";
+async function capture(t: TestContext, content?: (value: JsonValue) => JsonValue | undefined) {
+  const receiver = await collect();
+  const telemetry = createTelemetry({ connection: receiver.connection, content });
+  t.after(async () => {
     try {
-      assert.equal(
-        await telemetry.observe(
-          { name: "recording-failure", type: "span", input: "private" },
-          async () => "business-result",
-        ),
-        "business-result",
-      );
-      assert.equal(contentCalls, 1);
-      const original = new Error("private-business-error");
-      await assert.rejects(
-        telemetry.observe({ name: "business-failure", type: "span" }, async () => {
-          throw original;
-        }),
-        (error) => error === original,
-      );
-      let finishReached!: () => void;
-      const finished = new Promise<void>((resolve) => {
-        finishReached = resolve;
-      });
-      const run: Run = {
-        id: "persistence-run",
-        sessionId: "session",
-        requestId: "request",
-        userMessageId: "message",
-        position: 0,
-        status: "running",
-        sequence: 0,
-      };
-      const service = createRuntime({
-        sessions: {
-          admit: async () => ({ created: true, run }),
-          finish: async () => {
-            finishReached();
-            throw new Error("database unavailable");
-          },
-        } as unknown as Sessions,
-        contexts: { load: async () => ({ turns: [], summaryRevision: 0 }) },
-        agent: { run: async () => {} },
-        tools: {
-          configured: false,
-          open: async () => ({ definitions: [], invoke: async () => null, close: async () => {} }),
-        },
-        limits: { maxSteps: 2, maxTokens: 100, maxToolCalls: 1 },
-        system: "fixture",
-        timeoutMs: 1000,
-        telemetry,
-      });
-      await service.submit(
-        { userId: "test-user" },
-        { sessionId: "session", requestId: "request", userMessageId: "message", text: "fixture" },
-      );
-      await finished;
-      await service.close();
-      assert.equal(service.available(), false);
       await telemetry.close();
-      const root = receiver.spans.find((span) => span.name === "agent.run")!;
-      assert.equal(attr(root, "execution.status"), "failed");
-      const metadata = JSON.parse(attr(root, "langfuse.observation.metadata")!);
-      assert.equal(metadata.executionStatus, "completed");
-      assert.equal(metadata.errorCode, "RUN_PERSISTENCE_FAILED");
-      assert.ok(!JSON.stringify(receiver.spans).includes("private"));
-
-      receiver.receiver.status = 400;
-      const unavailable = createTelemetry({ connection: receiver.connection });
-      assert.equal(
-        await unavailable.observe({ name: "export-failure", type: "span" }, async () => 42),
-        42,
-      );
-      await unavailable.close();
-      assert.ok(receiver.spans.some((span) => span.name === "export-failure"));
     } finally {
-      await telemetry.close();
       await receiver.close();
-      logger.level = level;
     }
-  },
-);
+  });
+  return { ...receiver, telemetry };
+}
 
-test("content capture records the current user and committed reply; nested model data stays readable and credentials are redacted", async () => {
+test("recording failures preserve business results", async (t) => {
+  let contentCalls = 0;
+  const { telemetry } = await capture(t, () => {
+    contentCalls++;
+    throw new Error("redaction unavailable");
+  });
+  assert.equal(
+    await telemetry.observe(
+      { name: "recording-failure", type: "span", input: "private" },
+      async () => "business-result",
+    ),
+    "business-result",
+  );
+  assert.equal(contentCalls, 1);
+});
+
+test("business exceptions retain their identity and export only safe errors", async (t) => {
+  const { telemetry, spans } = await capture(t);
+  const original = new Error("private-business-error");
+  await assert.rejects(
+    telemetry.observe({ name: "business-failure", type: "span" }, async () => {
+      throw original;
+    }),
+    (error) => error === original,
+  );
+  await telemetry.close();
+  assert.ok(spans.some((span) => span.name === "business-failure"));
+  assert.ok(!JSON.stringify(spans).includes("private-business-error"));
+});
+
+test("failed finalization marks the run failed and stops admission", async (t) => {
+  const receiver = await capture(t);
+  const { telemetry } = receiver;
+  let finishReached!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finishReached = resolve;
+  });
+  const run: Run = {
+    id: "persistence-run",
+    sessionId: "session",
+    requestId: "request",
+    userMessageId: "message",
+    position: 0,
+    status: "running",
+    sequence: 0,
+  };
+  const service = createRuntime({
+    sessions: {
+      admit: async () => ({ created: true, run }),
+      finish: async () => {
+        finishReached();
+        throw new Error("database unavailable");
+      },
+    } as unknown as Sessions,
+    contexts: { load: async () => ({ turns: [], summaryRevision: 0 }) },
+    agent: { run: async () => {} },
+    tools: {
+      configured: false,
+      open: async () => ({ definitions: [], invoke: async () => null, close: async () => {} }),
+    },
+    limits: { maxSteps: 2, maxTokens: 100, maxToolCalls: 1 },
+    system: "fixture",
+    timeoutMs: 1000,
+    telemetry,
+  });
+  t.after(() => service.close());
+  await service.submit(
+    { userId: "test-user" },
+    { sessionId: "session", requestId: "request", userMessageId: "message", text: "fixture" },
+  );
+  await finished;
+  await service.close();
+  assert.equal(service.available(), false);
+  await telemetry.close();
+  const root = receiver.spans.find((span) => span.name === "agent.run")!;
+  assert.equal(attr(root, "execution.status"), "failed");
+  const metadata = JSON.parse(attr(root, "langfuse.observation.metadata")!);
+  assert.equal(metadata.executionStatus, "completed");
+  assert.equal(metadata.errorCode, "RUN_PERSISTENCE_FAILED");
+  assert.ok(!JSON.stringify(receiver.spans).includes("private"));
+});
+
+test("export rejection preserves successful business results", async (t) => {
+  const { receiver, telemetry, spans } = await capture(t);
+  receiver.status = 400;
+  assert.equal(
+    await telemetry.observe({ name: "export-failure", type: "span" }, async () => 42),
+    42,
+  );
+  await telemetry.close();
+  assert.ok(spans.some((span) => span.name === "export-failure"));
+});
+
+test("runtime content capture records the current user and committed reply", async () => {
   const receiver = await collect();
   const telemetry = createTelemetry({ connection: receiver.connection, content: (value) => value });
   const run: Run = {
@@ -420,21 +432,6 @@ test("content capture records the current user and committed reply; nested model
     },
     agent: {
       run: async ({ onEvent }) => {
-        await telemetry.observe(
-          {
-            name: "model.generate",
-            type: "generation",
-            input: {
-              messages: [{ role: "assistant", content: [{ type: "text", text: "nested text" }] }],
-              apiKey: "do-not-export",
-            },
-          },
-          async (observation) => {
-            observation.update({
-              output: { role: "assistant", content: [{ type: "text", text: "answer" }] },
-            });
-          },
-        );
         await onEvent({
           type: "message",
           message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
@@ -470,15 +467,35 @@ test("content capture records the current user and committed reply; nested model
     assert.deepEqual(JSON.parse(attr(root, "langfuse.observation.output")!), [
       { role: "assistant", content: "answer" },
     ]);
-    const generation = receiver.spans.find((span) => span.name === "model.generate")!;
-    const input = JSON.parse(attr(generation, "langfuse.observation.input")!);
-    assert.equal(input.messages[0].content[0].text, "nested text");
-    assert.equal(input.apiKey, "[redacted]");
-    assert.equal(attr(generation, "session.id"), run.sessionId);
-    assert.ok(!JSON.stringify(receiver.spans).includes("do-not-export"));
   } finally {
     await service.close();
     await telemetry.close();
     await receiver.close();
   }
+});
+
+test("model content preserves nested values and redacts credentials", async (t) => {
+  const receiver = await capture(t, (value) => value);
+  const { telemetry } = receiver;
+  await telemetry.observe(
+    {
+      name: "model.generate",
+      type: "generation",
+      input: {
+        messages: [{ role: "assistant", content: [{ type: "text", text: "nested text" }] }],
+        apiKey: "do-not-export",
+      },
+    },
+    async (observation) => {
+      observation.update({
+        output: { role: "assistant", content: [{ type: "text", text: "answer" }] },
+      });
+    },
+  );
+  await telemetry.close();
+  const generation = receiver.spans.find((span) => span.name === "model.generate")!;
+  const input = JSON.parse(attr(generation, "langfuse.observation.input")!);
+  assert.equal(input.messages[0].content[0].text, "nested text");
+  assert.equal(input.apiKey, "[redacted]");
+  assert.ok(!JSON.stringify(receiver.spans).includes("do-not-export"));
 });

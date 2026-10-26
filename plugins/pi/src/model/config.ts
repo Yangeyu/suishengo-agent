@@ -1,26 +1,31 @@
 import { z } from "zod";
-import { Check } from "typebox/value";
-import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
-import { OpenAICompletionsCompatSchema } from "@earendil-works/pi-ai/providers/compat-schema";
+import { bailianConnectionSchema, bailianModels } from "@plugins/pi/src/model/providers/bailian";
 
-export const piModelOptionsSchema = z
+export const piModelSelectionSchema = z
   .strictObject({
-    provider: z.string().min(1),
-    baseUrl: z.url(),
+    provider: z.literal("dashscope"),
     modelId: z.string().min(1),
-    apiKey: z.string().min(1),
-    contextWindow: z.number().int().min(1024).max(10000000),
     maxOutputTokens: z.number().int().positive(),
-    reasoning: z.boolean().default(false),
-    compat: z
-      .custom<OpenAICompletionsCompat>(
-        (value) => Check(OpenAICompletionsCompatSchema, value),
-        "Invalid OpenAI completions compatibility options",
-      )
-      .optional(),
   })
-  .refine((model) => model.maxOutputTokens < model.contextWindow, {
-    message: "Model output limit must be smaller than the context window",
-    path: ["maxOutputTokens"],
+  .superRefine((selection, ctx) => {
+    const model = bailianModels.find((model) => model.id === selection.modelId);
+    if (!model) {
+      ctx.addIssue({ code: "custom", path: ["modelId"], message: "Unknown DashScope model" });
+    } else if (
+      selection.maxOutputTokens > model.maxTokens ||
+      selection.maxOutputTokens >= model.contextWindow
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["maxOutputTokens"],
+        message: "Model output limit exceeds the supported model capability",
+      });
+    }
   });
-export type PiModelOptions = z.infer<typeof piModelOptionsSchema>;
+
+export const piModelOptionsSchema = piModelSelectionSchema
+  .safeExtend(bailianConnectionSchema.shape)
+  .transform((options) => ({
+    ...options,
+    contextWindow: bailianModels.find((model) => model.id === options.modelId)!.contextWindow,
+  }));

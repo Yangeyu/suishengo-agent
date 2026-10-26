@@ -11,57 +11,78 @@ const env = {
   AUTH_SECRET: "test-only-secret-at-least-thirty-two-characters",
 };
 const model = {
-  provider: "fixture",
-  modelId: "fixture",
-  contextWindow: 4096,
+  provider: "dashscope",
+  modelId: "deepseek-v4.1-flash",
   maxOutputTokens: 256,
 };
 const modelEnv = { DASHSCOPE_BASE_URL: "http://localhost:9000/v1", DASHSCOPE_API_KEY: "fixture" };
 
-test("configuration file controls capabilities and rejects invalid or incomplete enabled integrations", () => {
+test("custom files select capabilities and reject unknown fields", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "suishengo-config-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, "backend.yaml");
-  try {
-    writeFileSync(
-      path,
-      "model: false\ntools:\n  mcp: false\nruntime:\n  limits:\n    maxSteps: 3\n",
-    );
-    const config = loadConfig({ ...env, ...modelEnv, MCP_URL: "http://unused", CONFIG_FILE: path });
-    assert.equal(config.model, false);
-    assert.equal(config.tools.mcp, false);
-    assert.equal(config.runtime.limits.maxSteps, 3);
-    assert.equal(config.telemetry.connection, undefined);
+  writeFileSync(path, "model: false\ntools:\n  mcp: false\nruntime:\n  limits:\n    maxSteps: 3\n");
+  const config = loadConfig({ ...env, ...modelEnv, MCP_URL: "http://unused", CONFIG_FILE: path });
+  assert.equal(config.model, false);
+  assert.equal(config.tools.mcp, false);
+  assert.equal(config.runtime.limits.maxSteps, 3);
 
-    writeFileSync(path, "runtime:\n  timoutMs: 5000\n");
-    assert.throws(() => loadConfig({ ...env, CONFIG_FILE: path }), /timoutMs/);
-    assert.throws(() => resolveConfig({ model }, env), /apiKey/);
-    assert.throws(
-      () => resolveConfig({ tools: { mcp: { allowedTools: ["lookup"] } } }, env),
-      /serviceToken/,
-    );
-    assert.throws(
-      () => resolveConfig({ prompts: { remote: { name: "agent", version: 1 } } }, env),
-      /Langfuse/,
-    );
-    assert.throws(
-      () => resolveConfig({}, { ...env, LANGFUSE_BASE_URL: "https://example.com" }),
-      /publicKey/,
-    );
-    assert.throws(
-      () => resolveConfig({ model: { ...model, maxOutputTokens: 4096 } }, { ...env, ...modelEnv }),
-      /output limit/,
-    );
-    assert.throws(
-      () =>
-        resolveConfig(
-          { model, context: { compaction: { maxSummaryTokens: 4096 } } },
-          { ...env, ...modelEnv },
-        ),
-      /Summary limit/,
-    );
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
+  writeFileSync(path, "runtime:\n  timoutMs: 5000\n");
+  assert.throws(() => loadConfig({ ...env, CONFIG_FILE: path }), /timoutMs/);
+  assert.throws(
+    () => resolveConfig({ model: { ...model, unexpected: true } }, { ...env, ...modelEnv }),
+    /unexpected/,
+  );
+});
+
+test("enabled integrations require complete credentials and dependencies", () => {
+  assert.equal(resolveConfig({}, env).telemetry.connection, undefined);
+  assert.throws(() => resolveConfig({ model }, env), /apiKey/);
+  assert.throws(
+    () => resolveConfig({ tools: { mcp: { allowedTools: ["lookup"] } } }, env),
+    /serviceToken/,
+  );
+  assert.throws(
+    () => resolveConfig({ prompts: { remote: { name: "agent", version: 1 } } }, env),
+    /Langfuse/,
+  );
+  assert.throws(
+    () => resolveConfig({}, { ...env, LANGFUSE_BASE_URL: "https://example.com" }),
+    /publicKey/,
+  );
+});
+
+test("Bailian supplies its endpoint and model capabilities; deployments can override the endpoint", () => {
+  const config = resolveConfig({ model }, { ...env, DASHSCOPE_API_KEY: "fixture" });
+  assert.ok(config.model);
+  assert.equal(config.model.baseUrl, "https://dashscope.aliyuncs.com/compatible-mode/v1");
+  assert.equal(config.model.contextWindow, 131072);
+  assert.equal(config.model.maxOutputTokens, 256);
+  const overridden = resolveConfig({ model }, { ...env, ...modelEnv });
+  assert.ok(overridden.model);
+  assert.equal(overridden.model.baseUrl, modelEnv.DASHSCOPE_BASE_URL);
+});
+
+test("model selection, connection and budgets must satisfy the provider contract", () => {
+  const keyEnv = { ...env, ...modelEnv };
+  for (const [selection, error] of [
+    [{ ...model, provider: "unknown" }, /provider/],
+    [{ ...model, modelId: "unknown" }, /Unknown DashScope model/],
+    [{ ...model, maxOutputTokens: 4097 }, /output limit/],
+  ] as const) {
+    assert.throws(() => resolveConfig({ model: selection }, keyEnv), error);
   }
+  assert.throws(() => resolveConfig({ model }, { ...keyEnv, DASHSCOPE_API_KEY: " " }), /apiKey/);
+  for (const baseUrl of ["invalid", "ftp://localhost/models"]) {
+    assert.throws(
+      () => resolveConfig({ model }, { ...keyEnv, DASHSCOPE_BASE_URL: baseUrl }),
+      /baseUrl/,
+    );
+  }
+  assert.throws(
+    () => resolveConfig({ model, context: { compaction: { maxSummaryTokens: 131072 } } }, keyEnv),
+    /Summary limit/,
+  );
 });
 
 test("production requires external identity and a model; remote tool connections must use HTTPS", () => {

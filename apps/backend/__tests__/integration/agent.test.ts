@@ -5,34 +5,23 @@ import { SignJWT } from "jose";
 import { readUIMessageStream, type UIMessage, type UIMessageChunk } from "ai";
 import { createApplication } from "@backend/application";
 import { resolveConfig } from "@backend/config";
-import { migrateDatabase } from "@plugins/sessions-pg/src/migrate";
+import { databaseUrl, prepareDatabase } from "@backend-tests/integration/database";
 import { createFixtures, actorSecret, serviceToken } from "@backend-tests/integration/fixtures";
 import type { ChatSnapshot, MessageMetadata } from "@backend/http/ai-sdk";
-
-const databaseUrl = process.env.TEST_DATABASE_URL;
 
 test(
   "HTTP → Pi → MCP → PG → AI SDK: actor isolation, tool history and replay",
   { skip: !databaseUrl, timeout: 30000 },
   async () => {
-    if (!new URL(databaseUrl!).pathname.endsWith("_test"))
-      throw new Error("Use a dedicated database ending in _test");
-    await migrateDatabase(databaseUrl!);
+    await prepareDatabase();
 
     const fixtures = await createFixtures();
     const config = resolveConfig(
       {
         model: {
-          provider: "fixture",
-          modelId: "fixture",
-          contextWindow: 131072,
+          provider: "dashscope",
+          modelId: "deepseek-v4.1-flash",
           maxOutputTokens: 4096,
-          reasoning: true,
-          compat: {
-            supportsDeveloperRole: false,
-            thinkingFormat: "qwen",
-            requiresReasoningContentOnAssistantMessages: true,
-          },
         },
         tools: { mcp: { allowedTools: ["lookup"] } },
       },
