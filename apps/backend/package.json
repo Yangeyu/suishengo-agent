@@ -1,0 +1,4 @@
+{
+  "name": "@suishengo/backend", "private": true, "type": "module",
+  "scripts": { "dev": "pnpm --dir ../.. dev:backend" }
+}

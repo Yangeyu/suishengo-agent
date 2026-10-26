@@ -1,0 +1,19 @@
+name: suishengo-agent-dev
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: suishengo
+      POSTGRES_PASSWORD: local-development
+      POSTGRES_DB: suishengo_agent
+    ports:
+      - "127.0.0.1:5438:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U suishengo -d suishengo_agent"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  postgres:

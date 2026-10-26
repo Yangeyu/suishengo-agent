@@ -1,0 +1,56 @@
+{
+  "name": "suishengo-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.26.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @suishengo/backend --filter @suishengo/frontend dev",
+    "dev:backend": "tsx watch --env-file-if-exists=.env apps/backend/src/main.ts",
+    "dev:frontend": "pnpm --filter @suishengo/frontend dev",
+    "typecheck": "tsc --noEmit && pnpm --filter @suishengo/frontend typecheck",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build:frontend": "pnpm --filter @suishengo/frontend build",
+    "build": "pnpm build:backend && pnpm build:frontend",
+    "start": "node --env-file-if-exists=.env dist/apps/backend/src/main.js",
+    "db:generate": "drizzle-kit generate --config plugins/sessions-pg/drizzle.config.ts",
+    "db:migrate": "tsx --env-file-if-exists=.env apps/backend/src/migrate.ts",
+    "infra:up": "docker compose -f deploy/development/compose.yaml up -d --wait",
+    "infra:down": "docker compose -f deploy/development/compose.yaml down",
+    "dev:token": "tsx --env-file-if-exists=.env scripts/dev-token.ts",
+    "test": "tsx --test \"{apps,packages,plugins}/**/__tests__/**/*.test.ts\"",
+    "test:integration": "tsx --test tests/integration/*.test.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "eval": "tsx --env-file-if-exists=.env apps/eval/src/main.ts"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@earendil-works/pi-agent-core": "1.2.0",
+    "@earendil-works/pi-ai": "1.2.0",
+    "@langfuse/client": "6.0.2",
+    "@langfuse/otel": "6.0.2",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/core": "2.12.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.223.0",
+    "@opentelemetry/otlp-exporter-base": "0.223.0",
+    "@opentelemetry/sdk-trace-base": "2.12.0",
+    "@opentelemetry/sdk-trace-node": "2.12.0",
+    "ai": "7.0.153",
+    "drizzle-orm": "0.45.4",
+    "fastify": "5.12.7",
+    "jose": "6.2.13",
+    "pg": "8.23.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.15.6",
+    "drizzle-kit": "0.31.11",
+    "tsc-alias": "1.8.16",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

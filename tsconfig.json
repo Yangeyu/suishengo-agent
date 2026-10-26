@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "ESNext", "moduleResolution": "Bundler",
+    "strict": true, "noUncheckedIndexedAccess": true, "verbatimModuleSyntax": true,
+    "esModuleInterop": true, "skipLibCheck": true, "types": ["node"],
+    "rootDir": ".", "outDir": "dist",
+    "paths": {
+      "@harness": ["./packages/harness/src/index.ts"],
+      "@protocol": ["./packages/chat-protocol/src/index.ts"],
+      "@runtime": ["./packages/runtime/src/index.ts"],
+      "@plugins/*": ["./plugins/*"],
+      "@backend/*": ["./apps/backend/src/*"]
+    }
+  },
+  "include": ["apps/backend/**/*.ts", "apps/eval/**/*.ts", "packages/**/*.ts", "plugins/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+}
