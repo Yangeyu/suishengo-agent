@@ -1,13 +1,15 @@
-import { setTimeout as delay } from "node:timers/promises";
 import type { Actor, Sessions } from "@harness";
-import type { ChatChunk } from "@protocol";
+import type { UIMessageChunk } from "ai";
+import { setTimeout as delay } from "node:timers/promises";
+import { createUIStreamMapper } from "@backend/http/ai-sdk";
 
 /** Subscription cancellation never owns the run. PG events are the only stream source. */
-export function eventStream(sessions: Sessions, actor: Actor, runId: string, after = 0) {
+export function eventStream(sessions: Sessions, actor: Actor, runId: string) {
   const subscription = new AbortController();
   let buffer: Awaited<ReturnType<Sessions["events"]>> = [];
-  let cursor = after;
-  return new ReadableStream<ChatChunk>({
+  let cursor = 0;
+  const project = createUIStreamMapper(runId);
+  return new ReadableStream<UIMessageChunk>({
     async pull(controller) {
       try {
         while (!subscription.signal.aborted) {
@@ -15,8 +17,10 @@ export function eventStream(sessions: Sessions, actor: Actor, runId: string, aft
           const event = buffer.shift();
           if (event) {
             cursor = event.sequence;
-            controller.enqueue(event.chunk);
-            return;
+            const chunks = project(event.event);
+            for (const chunk of chunks) controller.enqueue(chunk);
+            if (chunks.length) return;
+            continue;
           }
           const run = await sessions.getRun(actor, runId);
           if (run.status !== "running" && cursor >= run.sequence) {
@@ -26,9 +30,13 @@ export function eventStream(sessions: Sessions, actor: Actor, runId: string, aft
           await delay(100, undefined, { signal: subscription.signal });
         }
       } catch {
-        if (!subscription.signal.aborted) controller.error(new Error("输出订阅失败，请重新加载会话"));
+        if (!subscription.signal.aborted)
+          controller.error(new Error("输出订阅失败，请重新加载会话"));
       }
     },
-    cancel() { subscription.abort(); },
+
+    cancel() {
+      subscription.abort();
+    },
   });
 }

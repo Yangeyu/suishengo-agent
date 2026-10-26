@@ -1,11 +1,83 @@
 {
-  "id": "aa82eac5-69dd-4015-a582-32af2762dc87",
+  "id": "1d71e332-8bee-4e7f-afbb-6744756e6023",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.chat_output_events": {
-      "name": "chat_output_events",
+    "public.chat_context_summaries": {
+      "name": "chat_context_summaries",
+      "schema": "",
+      "columns": {
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "through_position": {
+          "name": "through_position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "policy_version": {
+          "name": "policy_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model_id": {
+          "name": "model_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "chat_context_summaries_session_id_chat_sessions_id_fk": {
+          "name": "chat_context_summaries_session_id_chat_sessions_id_fk",
+          "tableFrom": "chat_context_summaries",
+          "tableTo": "chat_sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "summary_revision": {
+          "name": "summary_revision",
+          "value": "\"chat_context_summaries\".\"revision\" > 0"
+        },
+        "summary_position": {
+          "name": "summary_position",
+          "value": "\"chat_context_summaries\".\"through_position\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.chat_run_events": {
+      "name": "chat_run_events",
       "schema": "",
       "columns": {
         "run_id": {
@@ -20,8 +92,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "chunk": {
-          "name": "chunk",
+        "event": {
+          "name": "event",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
@@ -29,9 +101,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "chat_output_events_run_id_chat_runs_id_fk": {
-          "name": "chat_output_events_run_id_chat_runs_id_fk",
-          "tableFrom": "chat_output_events",
+        "chat_run_events_run_id_chat_runs_id_fk": {
+          "name": "chat_run_events_run_id_chat_runs_id_fk",
+          "tableFrom": "chat_run_events",
           "tableTo": "chat_runs",
           "columnsFrom": [
             "run_id"
@@ -44,8 +116,8 @@
         }
       },
       "compositePrimaryKeys": {
-        "chat_output_events_run_id_sequence_pk": {
-          "name": "chat_output_events_run_id_sequence_pk",
+        "chat_run_events_run_id_sequence_pk": {
+          "name": "chat_run_events_run_id_sequence_pk",
           "columns": [
             "run_id",
             "sequence"
@@ -63,7 +135,7 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "uuid",
+          "type": "text",
           "primaryKey": true,
           "notNull": true
         },
@@ -79,37 +151,49 @@
           "primaryKey": false,
           "notNull": true
         },
-        "position": {
-          "name": "position",
+        "ordinal": {
+          "name": "ordinal",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "role": {
-          "name": "role",
+        "step": {
+          "name": "step",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "parts": {
-          "name": "parts",
+        "message": {
+          "name": "message",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "open_part": {
+          "name": "open_part",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
-        "messages_position": {
-          "name": "messages_position",
+        "messages_run_ordinal": {
+          "name": "messages_run_ordinal",
           "columns": [
             {
-              "expression": "session_id",
+              "expression": "run_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "position",
+              "expression": "ordinal",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -153,9 +237,9 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "messages_role": {
-          "name": "messages_role",
-          "value": "role in ('user', 'assistant')"
+        "messages_status": {
+          "name": "messages_status",
+          "value": "status in ('streaming', 'complete', 'interrupted')"
         }
       },
       "isRLSEnabled": false
@@ -188,15 +272,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "input": {
-          "name": "input",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "assistant_id": {
-          "name": "assistant_id",
-          "type": "uuid",
+        "position": {
+          "name": "position",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
@@ -222,6 +300,27 @@
         }
       },
       "indexes": {
+        "runs_position": {
+          "name": "runs_position",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "runs_request": {
           "name": "runs_request",
           "columns": [
@@ -308,8 +407,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "next_message": {
-          "name": "next_message",
+        "next_position": {
+          "name": "next_position",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,

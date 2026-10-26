@@ -9,6 +9,10 @@ export async function migrateDatabase(url: string) {
   try {
     const lock = await client.query("select pg_try_advisory_lock(726451, 3) as acquired");
     if (!lock.rows[0]?.acquired) throw new Error("A migration is already running");
-    await migrate(drizzle(client), { migrationsFolder: fileURLToPath(new URL("../migrations/", import.meta.url)) });
-  } finally { await client.end(); }
+    await migrate(drizzle(client), {
+      migrationsFolder: fileURLToPath(new URL("../migrations/", import.meta.url)),
+    });
+  } finally {
+    await client.end();
+  }
 }

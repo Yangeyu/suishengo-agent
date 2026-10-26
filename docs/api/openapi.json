@@ -1,0 +1,1302 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "随申 GO Agent HTTP API",
+    "version": "1.0.0",
+    "description": "随申 GO Agent HTTP 接口契约，协议版本 1。使用前请阅读同目录 README.md。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:4400",
+      "description": "本地开发；部署时替换为实际服务地址"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/health/live": {
+      "get": {
+        "operationId": "getLiveness",
+        "summary": "进程存活",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "进程可响应",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "alive",
+                      "type": "string"
+                    }
+                  },
+                  "required": ["status"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "getReadiness",
+        "summary": "运行入口状态，不探测外部服务",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "可接收运行；不保证已配置模型",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    }
+                  },
+                  "required": ["status"]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "正在关闭或运行终态持久化失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "draining",
+                      "type": "string"
+                    }
+                  },
+                  "required": ["status"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/capabilities": {
+      "get": {
+        "operationId": "getCapabilities",
+        "summary": "查询配置能力",
+        "responses": {
+          "200": {
+            "description": "配置状态，不代表外部依赖联通",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions": {
+      "get": {
+        "operationId": "listSessions",
+        "summary": "列出当前用户最近创建的至多 100 个会话",
+        "responses": {
+          "200": {
+            "description": "按创建时间倒序",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionSummary"
+                  },
+                  "maxItems": 100
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSession",
+        "summary": "创建当前用户的会话",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_INPUT 或 REQUEST_FAILED：标题、JSON 或请求格式不正确",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "REQUEST_FAILED：请求体超过 32768 字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "REQUEST_FAILED：不支持的媒体类型",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{id}": {
+      "get": {
+        "operationId": "getSession",
+        "summary": "读取消息快照和活跃运行",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "会话快照",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_INPUT 或 REQUEST_FAILED：UUID、JSON 或请求格式不正确",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND：资源不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{id}": {
+      "get": {
+        "operationId": "getRun",
+        "summary": "查询运行状态",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "运行信息；客户端只依赖声明的公共字段",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_INPUT 或 REQUEST_FAILED：UUID、JSON 或请求格式不正确",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND：资源不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{id}/cancel": {
+      "post": {
+        "operationId": "cancelRun",
+        "summary": "取消运行并等待本地运行收尾",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "返回最新运行状态，已结束运行保持终态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_INPUT 或 REQUEST_FAILED：UUID、JSON 或请求格式不正确",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND：资源不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chat": {
+      "post": {
+        "operationId": "submitChat",
+        "summary": "提交一条用户文本消息，或重放相同请求",
+        "description": "sessionId + requestId 是幂等键；重试保持 message.id 与 trim 后文本相同。只接受一个文本 part，trim 后不能为空。身份和历史由服务端提供。SSE 建立后的失败通过流事件与运行状态表达。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AI SDK UI Message SSE；data 为 UIMessageChunk JSON，最后为 data: [DONE]。重放为完整流；具体交互见同目录 README.md。",
+            "headers": {
+              "x-vercel-ai-ui-message-stream": {
+                "schema": {
+                  "type": "string",
+                  "const": "v1"
+                }
+              },
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "no-cache, no-transform"
+              },
+              "x-accel-buffering": {
+                "schema": {
+                  "type": "string",
+                  "const": "no"
+                }
+              },
+              "x-run-id": {
+                "description": "用于查询、取消和重放的运行 ID",
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "SSE 文本；单条 JSON data 的结构见 components/schemas/UIMessageChunk。[DONE] 与注释心跳不是 JSON。"
+                },
+                "example": "data: {\"type\":\"start\",\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"messageMetadata\":{\"runId\":\"00000000-0000-4000-8000-000000000004\",\"schemaVersion\":1}}\n\ndata: {\"type\":\"text-start\",\"id\":\"1:0\"}\n\ndata: {\"type\":\"text-delta\",\"id\":\"1:0\",\"delta\":\"你好\"}\n\ndata: {\"type\":\"text-end\",\"id\":\"1:0\"}\n\ndata: {\"type\":\"finish\",\"finishReason\":\"stop\"}\n\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_INPUT 或 REQUEST_FAILED：UUID、JSON 或请求格式不正确",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND：资源不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_CONFLICT：同键内容不同；SESSION_BUSY：会话已有活跃运行",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "REQUEST_FAILED：请求体超过 32768 字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "REQUEST_FAILED：不支持的媒体类型",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "CAPACITY_EXCEEDED：用户或全局并发额度已满",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "NOT_READY：服务暂不可用；MODEL_NOT_CONFIGURED：未配置模型",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{id}/stream": {
+      "get": {
+        "operationId": "replayRun",
+        "summary": "从头重放运行，仍在运行时继续订阅",
+        "description": "没有公开游标续传协议；客户端按 messageId 替换此前的部分 assistant 消息。断开订阅不取消运行。",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AI SDK UI Message SSE；data 为 UIMessageChunk JSON，最后为 data: [DONE]。重放为完整流；具体交互见同目录 README.md。",
+            "headers": {
+              "x-vercel-ai-ui-message-stream": {
+                "schema": {
+                  "type": "string",
+                  "const": "v1"
+                }
+              },
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "no-cache, no-transform"
+              },
+              "x-accel-buffering": {
+                "schema": {
+                  "type": "string",
+                  "const": "no"
+                }
+              }
+            },
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "SSE 文本；单条 JSON data 的结构见 components/schemas/UIMessageChunk。[DONE] 与注释心跳不是 JSON。"
+                },
+                "example": "data: {\"type\":\"start\",\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"messageMetadata\":{\"runId\":\"00000000-0000-4000-8000-000000000004\",\"schemaVersion\":1}}\n\ndata: {\"type\":\"text-start\",\"id\":\"1:0\"}\n\ndata: {\"type\":\"text-delta\",\"id\":\"1:0\",\"delta\":\"你好\"}\n\ndata: {\"type\":\"text-end\",\"id\":\"1:0\"}\n\ndata: {\"type\":\"finish\",\"finishReason\":\"stop\"}\n\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_INPUT 或 REQUEST_FAILED：UUID、JSON 或请求格式不正确",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED：访问令牌缺失、无效或过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND：资源不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "REQUEST_FAILED：服务端错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "SessionSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": ["id", "title", "createdAt"],
+        "additionalProperties": false
+      },
+      "Run": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "sessionId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["running", "completed", "failed", "cancelled", "interrupted"]
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "userMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "sessionId",
+          "requestId",
+          "status",
+          "sequence",
+          "userMessageId",
+          "position"
+        ],
+        "additionalProperties": false
+      },
+      "UIMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["user", "assistant"]
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "schemaVersion": {
+                "type": "number",
+                "const": 1
+              }
+            },
+            "required": ["runId", "schemaVersion"],
+            "additionalProperties": false
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "text"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["streaming", "done"]
+                    }
+                  },
+                  "required": ["type", "text"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "reasoning"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["streaming", "done"]
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["type", "text"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "step-start"
+                    }
+                  },
+                  "required": ["type"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "dynamic-tool"
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolName": {
+                      "type": "string"
+                    },
+                    "input": {},
+                    "state": {
+                      "type": "string",
+                      "const": "input-available"
+                    }
+                  },
+                  "required": ["type", "toolCallId", "toolName", "input", "state"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "dynamic-tool"
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolName": {
+                      "type": "string"
+                    },
+                    "input": {},
+                    "state": {
+                      "type": "string",
+                      "const": "output-available"
+                    },
+                    "output": {}
+                  },
+                  "required": ["type", "toolCallId", "toolName", "input", "state", "output"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "dynamic-tool"
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolName": {
+                      "type": "string"
+                    },
+                    "input": {},
+                    "state": {
+                      "type": "string",
+                      "const": "output-error"
+                    },
+                    "errorText": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["type", "toolCallId", "toolName", "input", "state", "errorText"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": ["id", "role", "metadata", "parts"],
+        "additionalProperties": false
+      },
+      "SessionSnapshot": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/SessionSummary"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UIMessage"
+            }
+          },
+          "activeRun": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Run"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["session", "messages", "activeRun"],
+        "additionalProperties": false
+      },
+      "UIMessageChunk": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "start"
+              },
+              "messageId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "messageMetadata": {
+                "type": "object",
+                "properties": {
+                  "runId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "schemaVersion": {
+                    "type": "number",
+                    "const": 1
+                  }
+                },
+                "required": ["runId", "schemaVersion"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["type", "messageId", "messageMetadata"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "start-step"
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "finish-step"
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "text-start"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "id"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "text-delta"
+              },
+              "id": {
+                "type": "string"
+              },
+              "delta": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "id", "delta"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "text-end"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "id"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "tool-input-available"
+              },
+              "toolCallId": {
+                "type": "string"
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "input": {},
+              "dynamic": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": ["type", "toolCallId", "toolName", "input", "dynamic"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "tool-output-available"
+              },
+              "toolCallId": {
+                "type": "string"
+              },
+              "output": {}
+            },
+            "required": ["type", "toolCallId", "output"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "tool-output-error"
+              },
+              "toolCallId": {
+                "type": "string"
+              },
+              "errorText": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "toolCallId", "errorText"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "error"
+              },
+              "errorText": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "errorText"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "abort"
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "finish"
+              },
+              "finishReason": {
+                "type": "string",
+                "enum": ["stop", "other"]
+              }
+            },
+            "required": ["type", "finishReason"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "reasoning-start"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "id"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "reasoning-delta"
+              },
+              "id": {
+                "type": "string"
+              },
+              "delta": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "id", "delta"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "reasoning-end"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "id"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "CreateSessionInput": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "default": "新对话",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChatInput": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "message": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "role": {
+                "type": "string",
+                "const": "user"
+              },
+              "parts": {
+                "minItems": 1,
+                "maxItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "text"
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    }
+                  },
+                  "required": ["type", "text"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["id", "role", "parts"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["sessionId", "requestId", "message"],
+        "additionalProperties": false
+      },
+      "Capabilities": {
+        "type": "object",
+        "properties": {
+          "modelConfigured": {
+            "type": "boolean"
+          },
+          "businessTools": {
+            "type": "boolean"
+          },
+          "protocolVersion": {
+            "type": "number",
+            "const": 1
+          }
+        },
+        "required": ["modelConfigured", "businessTools", "protocolVersion"],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["code", "message"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["error"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
