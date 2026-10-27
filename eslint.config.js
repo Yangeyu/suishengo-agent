@@ -72,6 +72,49 @@ export default [
               message: "浏览器只共享会话数据类型。",
             },
             {
+              target: "./apps/frontend/src/pages",
+              from: "./apps/frontend/src/app",
+              message: "页面不能反向依赖应用入口。",
+            },
+            {
+              target: "./apps/frontend/src/features",
+              from: ["./apps/frontend/src/app", "./apps/frontend/src/pages"],
+              message: "功能模块不依赖页面组装。",
+            },
+            {
+              target: "./apps/frontend/src/features/sessions",
+              from: "./apps/frontend/src/features/conversation",
+              message: "会话目录与消息流由页面协调，不相互依赖。",
+            },
+            {
+              target: "./apps/frontend/src/features/conversation",
+              from: "./apps/frontend/src/features/sessions",
+              message: "会话目录与消息流由页面协调，不相互依赖。",
+            },
+            {
+              target: [
+                "./apps/frontend/src/components",
+                "./apps/frontend/src/lib",
+                "./apps/frontend/src/types",
+              ],
+              from: [
+                "./apps/frontend/src/app",
+                "./apps/frontend/src/pages",
+                "./apps/frontend/src/features",
+              ],
+              message: "共享展示、基础请求和契约不能依赖业务模块。",
+            },
+            {
+              target: "./apps/frontend/src/components",
+              from: "./apps/frontend/src/lib",
+              message: "共享展示组件不发起业务请求。",
+            },
+            {
+              target: ["./apps/frontend/src/lib", "./apps/frontend/src/types"],
+              from: "./apps/frontend/src/components",
+              message: "基础请求和契约不依赖展示组件。",
+            },
+            {
               target: "./packages",
               from: ["./apps", "./plugins"],
               message: "核心模块不能反向依赖应用组装或插件实现。",

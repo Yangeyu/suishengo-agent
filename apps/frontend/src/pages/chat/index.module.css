@@ -1,0 +1,81 @@
+.workspace {
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mainHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 76px;
+  padding: 0 34px;
+}
+.headerTitle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.assistantName {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.headerDivider {
+  color: #d1d0c5;
+  font-size: 16px;
+}
+.title {
+  font-size: 12px;
+  font-weight: 400;
+  color: #929286;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+}
+.workbenchLabel {
+  color: #a4a398;
+  font-size: 10px;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
+.pageNotice {
+  margin: 0 32px 10px;
+}
+.sidebarBackdrop {
+  display: none;
+}
+@media (max-width: 1000px) {
+  .workbenchLabel {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .sidebarBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    border: 0;
+    border-radius: 0;
+    background: #33382a44;
+  }
+  .mainHeader {
+    min-height: 64px;
+    padding: 0 20px;
+  }
+  .headerTitle {
+    gap: 10px;
+  }
+  .pageNotice {
+    margin: 0 16px 10px;
+  }
+}

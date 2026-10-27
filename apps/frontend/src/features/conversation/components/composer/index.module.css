@@ -1,0 +1,118 @@
+.composer {
+  background: #fffefa;
+  border: 1px solid #dedfd4;
+  border-radius: 17px;
+  padding: 16px 18px 12px;
+  box-shadow: 0 4px 18px #454a2e05;
+}
+.composer:focus-within {
+  border-color: #aeb79c;
+  box-shadow: 0 3px 18px #454a2e08;
+}
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 55px;
+  max-height: 180px;
+  resize: none;
+  border: 0;
+  padding: 0;
+  color: #45483c;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.composer textarea:focus-visible {
+  outline: none;
+}
+.composer textarea::placeholder {
+  color: #a6a699;
+}
+.composerBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.composerBottom > span {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: #9b9f8c;
+  font-size: 10px;
+}
+.composerBottom > span svg {
+  width: 13px;
+  height: 13px;
+}
+.sendButton {
+  background: #747d67;
+  border-color: #747d67;
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+}
+.sendButton:disabled {
+  background: #e9ebdf;
+  color: #a7ad97;
+  border-color: #e9ebdf;
+  opacity: 1;
+}
+.composerHint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 10px;
+  color: #a6a598;
+  margin: 12px 0 3px;
+}
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 20px 0 24px;
+}
+.suggestions button {
+  border-color: #e7e6de;
+  font-size: 11px;
+  color: #8d9080;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.suggestions svg {
+  width: 11px;
+  height: 11px;
+  color: #aaa999;
+}
+@media (max-width: 760px) {
+  .composer {
+    padding: 14px;
+  }
+  .suggestions {
+    margin: 18px 0;
+    gap: 6px;
+  }
+  .suggestions button {
+    font-size: 10px;
+  }
+  .composerHint {
+    font-size: 9px;
+    gap: 6px;
+  }
+}
+@media (max-height: 650px) {
+  .suggestions {
+    margin: 12px 0;
+  }
+}
+.sendButton:hover:not(:disabled) {
+  background: #606b55;
+}

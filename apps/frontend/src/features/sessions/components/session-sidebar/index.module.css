@@ -1,0 +1,214 @@
+.sidebar {
+  width: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  visibility: hidden;
+  background: #f0efe9;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar.open {
+  width: 272px;
+  padding: 24px 16px 16px;
+  border-right: 1px solid #e9e7df;
+  visibility: visible;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 5px;
+  margin-bottom: 22px;
+  white-space: nowrap;
+}
+.brand strong {
+  font-weight: 500;
+  font-size: 16px;
+}
+.brand .collapseButton {
+  margin-left: auto;
+}
+.newSession {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: #faf9f5;
+  border-color: #deded3;
+  font-size: 13px;
+  text-align: left;
+  border-radius: 9px;
+}
+.newSession svg {
+  color: #747f64;
+}
+.sessionSearch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 16px 4px 8px;
+  color: #94958b;
+  min-height: 34px;
+}
+.sessionSearch input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  min-width: 0;
+  width: 100%;
+  font-size: 12px;
+  color: inherit;
+}
+.sessionSearch:focus-within {
+  color: #45483d;
+}
+.sessionSearch input::placeholder {
+  color: #94958b;
+}
+.sidebar nav {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  margin: 0 -5px;
+  padding: 0 5px 20px;
+  scrollbar-width: thin;
+  scrollbar-color: #d8d7ce transparent;
+}
+.sessionGroup h2 {
+  margin: 24px 10px 10px;
+  color: #929287;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+.sessionRow {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  border-radius: 7px;
+  margin: 3px 0;
+  position: relative;
+}
+.sessionRow:hover {
+  background: #e9e8df;
+}
+.sessionRow.selected {
+  background: #e2e5d9;
+  color: #4b5741;
+}
+.sessionLink {
+  border: 0;
+  background: transparent;
+  flex: 1;
+  text-align: left;
+  padding: 11px 10px;
+  font-size: 12px;
+  min-width: 0;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.sessionLink:hover:not(:disabled) {
+  background: transparent;
+}
+.sessionLink > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sessionActions {
+  display: none;
+  padding-right: 4px;
+}
+.sessionRow:hover .sessionActions,
+.sessionRow:focus-within .sessionActions,
+.sessionRow.selected .sessionActions {
+  display: flex;
+}
+.sessionActions .actionButton {
+  width: 25px;
+  height: 27px;
+  padding: 5px;
+}
+.emptyList {
+  color: var(--muted);
+  text-align: center;
+  padding: 48px 4px;
+}
+.emptyList > svg {
+  opacity: 0.6;
+}
+.emptyList p {
+  font-size: 12px;
+  margin: 12px 0 7px;
+}
+.emptyList small {
+  font-size: 10px;
+  color: #9a9a90;
+}
+.sidebarFooter {
+  border-top: 1px solid #e2e1d7;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 5px 0;
+  white-space: nowrap;
+}
+.profileMark {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: #e3e5da;
+  color: #79836b;
+  border-radius: 50%;
+  font-size: 10px;
+}
+.sidebarFooter strong {
+  font-size: 12px;
+  font-weight: 500;
+  display: block;
+  margin-bottom: 5px;
+}
+.sidebarFooter span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #919184;
+  font-size: 10px;
+}
+.sidebarFooter .refreshButton {
+  margin-left: auto;
+}
+.dot {
+  width: 5px;
+  height: 5px;
+  background: #aaa99d;
+  border-radius: 50%;
+}
+.dot.online {
+  background: #889b74;
+}
+@media (hover: none) {
+  .sessionActions {
+    display: flex;
+  }
+}
+@media (max-width: 1000px) {
+  .sidebar.open {
+    width: 245px;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar {
+    position: fixed;
+    z-index: 20;
+    left: 0;
+    top: 0;
+    bottom: 0;
+  }
+  .sidebar.open {
+    width: min(290px, 85vw);
+    box-shadow: 15px 0 60px #33382a1a;
+  }
+}

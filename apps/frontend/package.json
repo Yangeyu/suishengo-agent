@@ -10,14 +10,17 @@
   "dependencies": {
     "@ai-sdk/react": "4.0.157",
     "ai": "7.0.153",
+    "lucide-react": "^1.61.0",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "6.1.2",
-    "vite": "8.3.5",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
   }
 }

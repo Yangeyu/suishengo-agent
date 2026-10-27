@@ -1,0 +1,52 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+.lucide {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.75;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 15px;
+  background: transparent;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+button:hover:not(:disabled) {
+  background: #eeede7;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+summary {
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

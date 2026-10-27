@@ -1,0 +1,64 @@
+button.primary {
+  background: #747d67;
+  border-color: #747d67;
+  color: #fff;
+}
+button.primary:hover:not(:disabled) {
+  background: #606b55;
+}
+.sessionDialog {
+  color: #44483a;
+  border: 1px solid #dfdfd4;
+  border-radius: 16px;
+  background: #faf9f6;
+  padding: 28px;
+  width: min(420px, calc(100% - 40px));
+  box-shadow: 0 20px 80px #292e2626;
+}
+.sessionDialog::backdrop {
+  background: #272b2255;
+  backdrop-filter: blur(3px);
+}
+.sessionDialog h2 {
+  margin: 0 0 24px;
+  font-size: 18px;
+  font-weight: 500;
+}
+.sessionDialog p {
+  font-size: 13px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+  color: #898b7d;
+}
+.sessionDialog label {
+  font-size: 12px;
+  color: #888c7c;
+}
+.sessionDialog input {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  background: #fffefa;
+  border: 1px solid #d8dbcd;
+  border-radius: 8px;
+  padding: 12px;
+  color: #454a3d;
+}
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 28px;
+  font-size: 12px;
+}
+button.danger {
+  color: #fff;
+  background: #a56858;
+  border-color: #a56858;
+}
+button.danger:hover:not(:disabled) {
+  background: #945846;
+}
+.sessionDialog .dialogError {
+  color: #a25f4b;
+}

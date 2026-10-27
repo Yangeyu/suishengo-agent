@@ -21,6 +21,16 @@ pnpm build:frontend
 
 `pnpm lint` 检查导入解析与模块依赖方向：核心模块不依赖应用和插件，插件不依赖应用，浏览器只通过 type-only 导入基础会话类型，展示类型由客户端使用 SDK 描述。运行逻辑通过 `harness/telemetry.ts` 使用观测能力，Langfuse SDK 实现归 telemetry 与 prompts 插件。规则见根目录 `eslint.config.js`。TypeScript 7 的类型检查由 tsc 执行，lint 使用 Babel 解析语法。
 
+## 前端组织
+
+`apps/frontend/src/app` 组装应用，`pages/chat` 组合工作台页面并协调 URL、当前会话和输入草稿。`features/sessions` 管理会话列表与增删改，`features/conversation` 管理消息、流订阅、同步和取消。两个 feature 由页面协调，不相互导入。共享展示组件归 `components`，基础 HTTP 请求归 `lib/http.ts`，共享展示契约归 `types/contracts.ts`；依赖方向由 ESLint 检查。
+
+前端文件与目录使用 kebab-case，React 组件及其 Props 类型使用 PascalCase，函数与变量使用 camelCase。Hook 文件命名为 `use-conversation.ts`，导出 `useConversation`，放在所属页面或 feature 的 `hooks/` 中；组件放在 `components/`。普通请求与协议适配保持普通函数，不包装成 hook。
+
+单文件组件直接使用 `session-item.tsx` 这样的文件名。组件有独立样式或私有组成时使用 `session-sidebar/index.tsx`，入口直接实现组件，样式同目录使用 `index.module.css`，CSS Modules 类名使用 camelCase。不为单文件组件增加目录，不创建纯转发入口。全局样式仅保留 `styles/theme.css` 的主题变量与 `styles/base.css` 的基础规则。
+
+新会话发送由页面直接串联创建、选择与发送，不依赖组件挂载触发。每次选择会话创建独立的 SDK Chat 实例；切换时终止旧订阅与快照请求，保留后台运行。SDK 独占流式消息状态，运行 ID 由 conversation hook 管理，完整重放前替换该轮部分回答。会话选择请求与消息流各自拥有取消控制器，旧异步结果不能更新新会话。
+
 ## 数据库变更
 
 schema、生成配置、migrations 归 `plugins/sessions-pg`。修改 schema 后执行：
