@@ -1,4 +1,5 @@
 import type { AgentExecutor, ToolDefinition } from "@harness";
+import { noopTelemetry } from "@harness/telemetry";
 import type { AgentMiddleware } from "@harness/execution/middleware";
 import { Context, type Fiber, type Plugin } from "@deepseek-ai/cordis";
 
@@ -7,8 +8,7 @@ import { sessionsPg } from "@plugins/sessions-pg/src/index";
 import { pi } from "@plugins/pi/src/loop/index";
 import { piModels } from "@plugins/pi/src/model/index";
 import { createBailianProvider } from "@plugins/pi/src/model/providers/bailian";
-import { createContexts } from "@plugins/context/src/index";
-import { contextCompaction } from "@plugins/context/src/compaction";
+import { createContext } from "@plugins/context/src/index";
 
 import { telemetry } from "@plugins/telemetry/src/index";
 import { prompts } from "@plugins/prompts/src/index";
@@ -46,26 +46,32 @@ export async function createApplication(
   // 先排空运行和 HTTP 请求，再逆序释放插件持有的连接与观测资源。
   const close = () =>
     (closing ??= (async () => {
-      await runtime?.close();
-      await http?.close();
-      for (const fiber of [...fibers].reverse()) await fiber.dispose();
-      await ctx.fiber.dispose();
+      const errors: unknown[] = [];
+      const release = async (dispose: () => Promise<unknown>) => {
+        try {
+          await dispose();
+        } catch (error) {
+          errors.push(error);
+        }
+      };
+      await release(async () => runtime?.close());
+      await release(async () => http?.close());
+      for (const fiber of [...fibers].reverse()) await release(() => fiber.dispose());
+      await release(() => ctx.fiber.dispose());
+      if (errors.length) throw new AggregateError(errors, "Application shutdown failed");
     })());
 
   try {
     await mount(sessionsPg, config.storage);
-    await mount(telemetry, config.telemetry);
-    await mount(prompts, {
-      local: systemPrompt,
-      connection: config.telemetry.connection,
-      remote: config.prompts.remote,
-    });
+    if (config.telemetry) await mount(telemetry, config.telemetry);
+    else ctx.provide("telemetry", noopTelemetry);
 
     await mount(mcp, config.tools.mcp);
     await mount(toolsPlugin, {
       sessions: ctx.sessions,
       definitions: overrides.tools,
       sources: [ctx.get("mcp")],
+      telemetry: ctx.telemetry,
     });
 
     await mount(
@@ -83,27 +89,31 @@ export async function createApplication(
     else if (config.model) await mount(pi, undefined);
 
     const models = ctx.get("models");
-    const middleware: AgentMiddleware[] = [];
-    let summaryVersion: string | undefined;
-    if (models && config.context.compaction) {
-      const policy = config.context.compaction;
-      middleware.push(contextCompaction({ store: ctx.sessions, policy }));
-      summaryVersion = policy.version;
-    }
-    middleware.push(...(overrides.middleware ?? []));
+    const context = createContext({
+      sessions: ctx.sessions,
+      store: ctx.sessions,
+      config: config.context,
+      telemetry: ctx.telemetry,
+    });
+    const middleware: AgentMiddleware[] = [...context.middleware, ...(overrides.middleware ?? [])];
+    await mount(prompts, {
+      ...config.prompts,
+      definitions: [systemPrompt, ...middleware.flatMap((item) => item.prompts ?? [])],
+      connection: config.langfuse,
+    });
 
     runtime = createRuntime({
       sessions: ctx.sessions,
       agent: ctx.get("agent"),
       tools: ctx.tools,
       limits: config.runtime.limits,
-      system: ctx.systemPrompt.text,
-      prompt: ctx.systemPrompt.reference,
+      system: systemPrompt,
+      prompts: ctx.prompts,
       timeoutMs: config.runtime.timeoutMs,
-      telemetry: ctx.telemetry,
       models,
-      contexts: createContexts(ctx.sessions, ctx.sessions, summaryVersion),
+      contexts: context.contexts,
       middleware,
+      telemetry: ctx.telemetry,
     });
     http = createHttp({
       sessions: ctx.sessions,
@@ -120,7 +130,11 @@ export async function createApplication(
       close,
     };
   } catch (error) {
-    await close();
+    try {
+      await close();
+    } catch {
+      logger.error({ event: "backend.cleanup_failed" });
+    }
     throw error;
   }
 }

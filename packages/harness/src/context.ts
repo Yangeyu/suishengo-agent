@@ -1,3 +1,4 @@
+import type { PromptSnapshot } from "@harness/prompts";
 import type { Actor } from "@harness/scope";
 import type { HistoryTurn } from "@harness/sessions";
 import type { ModelInput } from "@harness/models";
@@ -28,12 +29,14 @@ export interface ContextStore {
 }
 
 export interface Contexts {
-  load(actor: Actor, runId: string): Promise<ConversationHistory>;
+  load(actor: Actor, runId: string, prompts: PromptSnapshot): Promise<ConversationHistory>;
 }
 
 /** Conservative UTF-8 estimate including schemas; not a provider tokenizer. */
 export function estimateContext(context: ModelInput): number {
   return (
-    new TextEncoder().encode(JSON.stringify(context)).byteLength + 32 * context.messages.length
+    new TextEncoder().encode(JSON.stringify({ ...context, system: context.system.text }))
+      .byteLength +
+    32 * context.messages.length
   );
 }

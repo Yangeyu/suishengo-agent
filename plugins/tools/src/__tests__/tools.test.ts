@@ -1,4 +1,4 @@
-import { createTelemetry } from "@plugins/telemetry/src/index";
+import { noopTelemetry } from "@harness/telemetry";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { Context } from "@deepseek-ai/cordis";
@@ -8,7 +8,6 @@ import { toolsPlugin } from "@plugins/tools/src/index";
 
 async function setup(t: TestContext) {
   const ctx = new Context();
-  ctx.provide("telemetry", createTelemetry());
   const sessions: ToolSession[] = [];
   const effects = { executions: 0, wrappers: 0 };
   t.after(async () => {
@@ -16,6 +15,7 @@ async function setup(t: TestContext) {
     await ctx.fiber.dispose();
   });
   await ctx.plugin(toolsPlugin, {
+    telemetry: noopTelemetry,
     sources: [],
     definitions: [
       {
@@ -91,12 +91,11 @@ test("intercepted results must satisfy the tool output limit", async (t) => {
 
 test("tool sessions snapshot bounded plain-text titles without changing tool identifiers", async () => {
   const ctx = new Context();
-  ctx.provide("telemetry", createTelemetry());
   const titles = ["  查询资料  ", " ", "a\nb", "a\u2028b", "a\u202eb", "字".repeat(81), undefined];
   const definitions = titles.map((displayName, index) => ({
     name: "tool_" + index,
     displayName,
-    description: "Model-only description",
+    description: "Tool description",
     inputSchema: { type: "object" },
     effect: "read" as const,
     timeoutMs: 1000,
@@ -104,7 +103,7 @@ test("tool sessions snapshot bounded plain-text titles without changing tool ide
     execute: async () => "ok",
   }));
   try {
-    await ctx.plugin(toolsPlugin, { definitions, sources: [] });
+    await ctx.plugin(toolsPlugin, { telemetry: noopTelemetry, definitions, sources: [] });
     const context = {
       actor: { userId: "test" },
       runId: "run",

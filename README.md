@@ -16,6 +16,7 @@ cp .env.example .env
 pnpm infra:up
 pnpm db:migrate
 # 填写 DASHSCOPE_API_KEY，或在 apps/backend/config.yaml 中设置 model: false
+# 本地示例启用观测：填写 LANGFUSE_* 连接，或设置 TELEMETRY_ENABLED=false
 pnpm dev
 ```
 

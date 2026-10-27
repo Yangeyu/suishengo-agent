@@ -1,4 +1,4 @@
-import type { ObservationOutcome, PromptReference } from "@harness/telemetry";
+import type { PromptInput } from "@harness/prompts";
 import type { RunScope } from "@harness/scope";
 import type { AgentEvent } from "@harness/events";
 import type { AgentMessage, JsonValue } from "@harness/messages";
@@ -14,8 +14,7 @@ export interface AgentLimits {
 
 export interface AgentExecutor {
   run(input: {
-    system: string;
-    prompt?: PromptReference;
+    system: PromptInput;
     messages: AgentMessage[];
     tools: ToolSession;
     execution: AgentExecution;
@@ -30,7 +29,6 @@ export interface AgentExecution {
   readonly history: ConversationHistory;
   readonly models: Pick<Models, "resolve">;
   startStep(index: number): StepExecution;
-  outcome(error: unknown): ObservationOutcome;
   abort(reason?: unknown): void;
   model(request: ModelRequest, call?: ModelCall): ReturnType<ModelHandler>;
   tool(call: ToolInvocation, execute: ToolHandler): Promise<JsonValue>;
@@ -41,5 +39,7 @@ export interface StepExecution {
   readonly id: string;
   readonly index: number;
   within<T>(task: () => T): T;
-  end(outcome: ObservationOutcome): void;
+  end(result: StepResult): void;
 }
+
+export type StepResult = { status: "completed" } | { status: "failed"; error: unknown };

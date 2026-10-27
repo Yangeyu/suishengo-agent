@@ -46,6 +46,8 @@ export function modelResult(event: Completion): ModelResult {
       input: usage.input + usage.cacheRead + usage.cacheWrite,
       output: usage.output,
       total: usage.totalTokens,
+      cacheRead: usage.cacheRead,
+      cacheWrite: usage.cacheWrite,
     },
   };
 }
@@ -82,7 +84,7 @@ export const piModels = {
           {
             role: "system",
             timestamp: Date.now(),
-            content: context.system,
+            content: context.system.text,
             toolsAdded: context.tools.map((tool) => ({
               name: tool.name,
               description: tool.description,

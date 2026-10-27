@@ -1,4 +1,5 @@
-import { createTelemetry } from "@plugins/telemetry/src/index";
+import { noopTelemetry } from "@harness/telemetry";
+import { inlinePrompt } from "@harness/prompts";
 import type { RunScope } from "@harness/scope";
 import type { AgentEvent, AgentExecutor } from "@harness";
 import { piModels } from "@plugins/pi/src/model/index";
@@ -88,12 +89,11 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as { port: number };
   const ctx = new Context();
-  const telemetry = createTelemetry();
-  ctx.provide("telemetry", telemetry);
-  const steps: { index: number; status?: string }[] = [];
+  const steps: { index: number; status?: string; error?: unknown }[] = [];
 
   try {
     await ctx.plugin(toolsPlugin, {
+      telemetry: noopTelemetry,
       sources: [],
       definitions: [
         {
@@ -132,7 +132,7 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
       actor: { userId: "alice" },
       runId: "run",
       sessionId: "session",
-      system: "system instruction",
+      system: inlinePrompt("system instruction"),
       messages: [{ role: "user", text: "question" }],
       limits: { maxSteps: 3, maxToolCalls: 2, maxTokens: 10000 },
       signal: new AbortController().signal,
@@ -160,6 +160,7 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
           },
         },
         { turns: [], summaryRevision: 0 },
+        {},
         [
           {
             name: "check-model-tool-fields",
@@ -176,17 +177,18 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
           },
         ],
         ctx.models,
-        telemetry,
+        noopTelemetry,
       );
       const startStep = middleware.execution.startStep;
       middleware.execution.startStep = (index) => {
         const step = startStep(index);
-        const state = { index, status: undefined as string | undefined };
+        const state: (typeof steps)[number] = { index, status: undefined };
         steps.push(state);
         return {
           ...step,
           end(outcome) {
             state.status = outcome.status;
+            if (outcome.status === "failed") state.error = outcome.error;
             step.end(outcome);
           },
         };
@@ -243,7 +245,7 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
           model: ctx.models.resolve(),
           purpose: "compaction",
           maxOutputTokens: 128,
-          context: { system: "Summarize", messages: [], tools: [] },
+          context: { system: inlinePrompt("Summarize"), messages: [], tools: [] },
         },
         {
           actor: { userId: "alice" },
@@ -253,7 +255,13 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
           budget: { remaining: 1000, record() {} },
         },
       );
-      assert.deepEqual(summary.usage, { input: 10, output: 5, total: 15 });
+      assert.deepEqual(summary.usage, {
+        input: 10,
+        output: 5,
+        total: 15,
+        cacheRead: 0,
+        cacheWrite: 0,
+      });
       assert.equal(received.at(-1)?.max_tokens, 128);
       assert.equal(credentials.at(-1), "Bearer fixture-key");
       assert.equal(summary.message.source?.provider, "dashscope");
@@ -328,7 +336,7 @@ test("Pi agent protocol", { timeout: 15000 }, async (t) => {
       await started;
       controller.abort();
       await rejected;
-      assert.deepEqual(steps, [{ index: 1, status: "cancelled" }]);
+      assert.deepEqual(steps, [{ index: 1, status: "failed", error: controller.signal.reason }]);
     });
   } finally {
     await ctx.fiber.dispose();

@@ -1,10 +1,10 @@
-import type { PromptReference } from "@harness/telemetry";
+import type { PromptInput } from "@harness/prompts";
 import type { AgentMessage } from "@harness/messages";
 import type { RunScope } from "@harness/scope";
 import type { ToolDefinition } from "@harness/tools";
 
 export interface ModelInput {
-  system: string;
+  system: PromptInput;
   summary?: string;
   messages: AgentMessage[];
   tools: Pick<ToolDefinition, "name" | "description" | "inputSchema">[];
@@ -18,7 +18,6 @@ export interface ModelInfo {
 
 export interface ModelRequest {
   readonly model: ModelInfo;
-  readonly prompt?: PromptReference;
   readonly purpose: "conversation" | "compaction";
   readonly context: ModelInput;
   readonly maxOutputTokens: number;
@@ -26,7 +25,14 @@ export interface ModelRequest {
 
 export interface ModelResult {
   message: Extract<AgentMessage, { role: "assistant" }>;
-  usage: { input: number; output: number; total: number };
+  usage: {
+    /** Total input, including any reported cache reads and writes. */
+    input: number;
+    output: number;
+    total: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
   completionStartTime?: number;
   finishReason: "stop" | "toolUse" | "length";
 }

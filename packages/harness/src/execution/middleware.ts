@@ -1,4 +1,4 @@
-import type { Telemetry } from "@harness/telemetry";
+import type { PromptDefinition, PromptSnapshot } from "@harness/prompts";
 import type { Actor, RunScope } from "@harness/scope";
 import type { JsonValue } from "@harness/messages";
 import type { RunStatus } from "@harness/events";
@@ -15,10 +15,11 @@ import type { ToolInvocation, ToolHandler } from "@harness/tools";
 /** Each definition creates one instance per run; shared clients belong in its factory closure. */
 export interface AgentMiddleware {
   readonly name: string;
+  readonly prompts?: readonly PromptDefinition[];
   onRunEvent?(event: Readonly<RunLifecycleEvent>): void | Promise<void>;
   create(
     scope: RunScope,
-    services: { models: ScopedModels; history: ConversationHistory; telemetry: Telemetry },
+    services: { models: ScopedModels; history: ConversationHistory; prompts: PromptSnapshot },
   ): MiddlewareInstance | Promise<MiddlewareInstance>;
 }
 

@@ -1,13 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import pino from "pino";
+import { trace, isSpanContextValid } from "@opentelemetry/api";
 
 type LogContext = Readonly<{
   requestId?: string;
   runId?: string;
   sessionId?: string;
   toolCallId?: string;
-  traceId?: string;
-  spanId?: string;
   stepId?: string;
   stepIndex?: number;
 }>;
@@ -17,7 +16,13 @@ const context = new AsyncLocalStorage<LogContext>();
 
 export const logger = pino({
   level: "info",
-  mixin: () => ({ ...context.getStore() }),
+  mixin: () => {
+    const span = trace.getActiveSpan()?.spanContext();
+    return {
+      ...context.getStore(),
+      ...(span && isSpanContextValid(span) ? { traceId: span.traceId, spanId: span.spanId } : {}),
+    };
+  },
   redact: ["authorization", "apiKey", "secret", "req.headers.authorization"],
 });
 

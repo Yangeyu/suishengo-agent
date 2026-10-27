@@ -18,5 +18,3 @@ export type {
   HistoryTurn,
   Sessions,
 } from "@harness/sessions";
-
-export type { Observation, Telemetry } from "@harness/telemetry";

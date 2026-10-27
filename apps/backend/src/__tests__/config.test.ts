@@ -16,6 +16,11 @@ const model = {
   maxOutputTokens: 256,
 };
 const modelEnv = { DASHSCOPE_BASE_URL: "http://localhost:9000/v1", DASHSCOPE_API_KEY: "fixture" };
+const langfuseEnv = {
+  LANGFUSE_BASE_URL: "http://localhost:9001",
+  LANGFUSE_PUBLIC_KEY: "fixture-public",
+  LANGFUSE_SECRET_KEY: "fixture-secret",
+};
 
 test("custom files select capabilities and reject unknown fields", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "suishengo-config-"));
@@ -36,20 +41,61 @@ test("custom files select capabilities and reject unknown fields", (t) => {
 });
 
 test("enabled integrations require complete credentials and dependencies", () => {
-  assert.equal(resolveConfig({}, env).telemetry.connection, undefined);
+  assert.equal(resolveConfig({}, env).langfuse, undefined);
   assert.throws(() => resolveConfig({ model }, env), /apiKey/);
   assert.throws(
     () => resolveConfig({ tools: { mcp: { allowedTools: ["lookup"] } } }, env),
     /serviceToken/,
   );
   assert.throws(
-    () => resolveConfig({ prompts: { remote: { name: "agent", version: 1 } } }, env),
+    () =>
+      resolveConfig(
+        { prompts: { bindings: { "agent.system": { name: "agent", version: 1 } } } },
+        env,
+      ),
     /Langfuse/,
   );
   assert.throws(
     () => resolveConfig({}, { ...env, LANGFUSE_BASE_URL: "https://example.com" }),
     /publicKey/,
   );
+});
+
+test("telemetry shutdown has a bounded deployment override", () => {
+  const enabled = { ...env, ...langfuseEnv, TELEMETRY_ENABLED: "true" };
+  const defaults = resolveConfig({}, enabled).telemetry;
+  assert.ok(defaults);
+  assert.equal(defaults.shutdownTimeoutMs, 10000);
+  const overridden = resolveConfig(
+    {},
+    { ...enabled, LANGFUSE_SHUTDOWN_TIMEOUT_MS: "2000" },
+  ).telemetry;
+  assert.ok(overridden);
+  assert.equal(overridden.shutdownTimeoutMs, 2000);
+  for (const value of ["0", "25001", "invalid"]) {
+    assert.throws(
+      () => resolveConfig({}, { ...enabled, LANGFUSE_SHUTDOWN_TIMEOUT_MS: value }),
+      /shutdownTimeoutMs/,
+    );
+  }
+});
+
+test("telemetry is opt-in independently of Langfuse prompt connections", () => {
+  assert.equal(resolveConfig({}, env).telemetry, false);
+  const promptsOnly = resolveConfig(
+    { prompts: { bindings: { "agent.system": { name: "agent", version: 1 } } } },
+    { ...env, ...langfuseEnv, TELEMETRY_ENABLED: "false" },
+  );
+  assert.equal(promptsOnly.telemetry, false);
+  assert.ok(promptsOnly.langfuse);
+  assert.throws(() => resolveConfig({}, { ...env, TELEMETRY_ENABLED: "true" }), /connection/);
+  assert.throws(
+    () => resolveConfig({}, { ...env, TELEMETRY_ENABLED: "invalid" }),
+    /Invalid option/,
+  );
+  const enabled = resolveConfig({}, { ...env, ...langfuseEnv, TELEMETRY_ENABLED: "true" });
+  assert.ok(enabled.telemetry);
+  assert.equal(enabled.telemetry.captureContent, true);
 });
 
 test("Bailian supplies its endpoint and model capabilities; deployments can override the endpoint", () => {
@@ -120,5 +166,15 @@ test("production requires external identity and a model; remote tool connections
       ),
     /Production MCP requires HTTPS/,
   );
-  assert.equal(resolveConfig({ model }, production).telemetry.captureContent, false);
+  assert.equal(resolveConfig({ model }, { ...production, ...langfuseEnv }).telemetry, false);
+  const telemetry = resolveConfig(
+    { model },
+    {
+      ...production,
+      ...langfuseEnv,
+      TELEMETRY_ENABLED: "true",
+    },
+  ).telemetry;
+  assert.ok(telemetry);
+  assert.equal(telemetry.captureContent, false);
 });

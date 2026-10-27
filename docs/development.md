@@ -19,7 +19,7 @@ pnpm build:frontend
 
 使用 `pnpm format` 统一格式，`pnpm format:check` 检查格式。Prettier 负责缩进和长行，语义空行仍按完整行为分组，注释解释意图、取舍与关键约束。
 
-`pnpm lint` 检查导入解析与模块依赖方向：核心模块不依赖应用和插件，插件不依赖应用，浏览器只通过 type-only 导入基础会话类型，展示类型由客户端使用 SDK 描述。规则见根目录 `eslint.config.js`。TypeScript 7 的类型检查由 tsc 执行，lint 使用 Babel 解析语法。
+`pnpm lint` 检查导入解析与模块依赖方向：核心模块不依赖应用和插件，插件不依赖应用，浏览器只通过 type-only 导入基础会话类型，展示类型由客户端使用 SDK 描述。运行逻辑通过 `harness/telemetry.ts` 使用观测能力，Langfuse SDK 实现归 telemetry 与 prompts 插件。规则见根目录 `eslint.config.js`。TypeScript 7 的类型检查由 tsc 执行，lint 使用 Babel 解析语法。
 
 ## 数据库变更
 
@@ -43,7 +43,7 @@ schema 与对应 migrations 一起提交。初始化 migration 适用于空数�
 | 模型或 MCP 协议        | 对应协议验证；外部服务联调需使用测试身份和实际服务                         |
 | 完整工程变更           | `pnpm check`                                                               |
 
-`pnpm check` 执行格式、lint、类型检查、模块测试和构建。模块测试放在所属模块的 `__tests__`；真实 PG + HTTP 集成测试位于 `apps/backend/__tests__/integration`，通过独立命令运行。
+`pnpm check` 执行格式、lint、类型检查、模块测试和构建。模块测试放在所属模块的 `__tests__`；telemetry 测试通过本地 OTLP 接收端检查调用层级、字段、内容处理与导出失败。真实 PG + HTTP 集成测试位于 `apps/backend/__tests__/integration`，通过独立命令运行。
 
 测试聚焦认证、用户隔离、并发、取消、重放和外部协议。复用已有验证，只为缺少保障的重要行为补充测试。简单转发、私有实现细节和纯说明调整不单独补测试。按行为场景组织用例，各场景独立准备状态；共享夹具负责资源准备和释放。同一流程中的持久化、重放和恢复可以连续验证；无关行为分别建用例。删除失效行为时同步移除其断言和夹具。
 
@@ -61,7 +61,7 @@ docker compose -f deploy/development/compose.yaml exec -T postgres createdb -U s
 TEST_DATABASE_URL=postgresql://suishengo:local-development@127.0.0.1:5438/suishengo_agent_test pnpm test:integration
 ```
 
-未设置 `TEST_DATABASE_URL` 时会跳过 PG 集成测试，验证结果需记录通过、失败和跳过数。测试覆盖 HTTP、Pi、本地 MCP 与 PG 的协作，包括用户隔离、并发、取消、重放、工具历史和摘要持久化。模型与 MCP 使用本地协议夹具；Langfuse 导出由本地 OTLP 接收端验证。真实外部服务的联调要求见[外部接入](integrations.md)。
+未设置 `TEST_DATABASE_URL` 时会跳过 PG 集成测试，验证结果需记录通过、失败和跳过数。测试覆盖 HTTP、Pi、本地 MCP 与 PG 的协作，包括用户隔离、并发、取消、重放、工具历史、摘要持久化和应用关闭后的资源释放。模型与 MCP 使用本地协议夹具。真实外部服务的联调要求见[外部接入](integrations.md)。
 
 ## 真实模型冒烟
 

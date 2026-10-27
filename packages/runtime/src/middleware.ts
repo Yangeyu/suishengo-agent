@@ -1,9 +1,10 @@
+import { promptReference, validatePromptInput, type PromptSnapshot } from "@harness/prompts";
 import type { AgentMessage, JsonValue } from "@harness/messages";
-import type { Telemetry } from "@harness/telemetry";
-import { createHash } from "node:crypto";
+import type { Telemetry, ObservationData } from "@harness/telemetry";
 import { ServiceError } from "@harness";
+import { executionFailure } from "@harness/errors";
 import { estimateContext, type ConversationHistory } from "@harness/context";
-import type { ModelInput, ModelHandler, ModelResult, Models } from "@harness/models";
+import type { ModelInput, ModelHandler, ModelResult, ModelRequest, Models } from "@harness/models";
 import type { AgentExecution } from "@harness/execution";
 import type {
   AgentMiddleware,
@@ -12,33 +13,7 @@ import type {
 } from "@harness/execution/middleware";
 import type { RunScope } from "@harness/scope";
 import type { ToolHandler } from "@harness/tools";
-import { logger } from "@logging";
-
-/** Explicit chat roles keep observation replay readable without exposing adapter replay data. */
-function observationMessage(message: AgentMessage): JsonValue {
-  if (message.role === "user") return { role: "user", content: message.text };
-  if (message.role === "tool")
-    return {
-      role: "tool",
-      tool_call_id: message.callId,
-      name: message.name,
-      content: JSON.stringify(message.output),
-    };
-  return {
-    role: "assistant",
-    content: message.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("\n"),
-    tool_calls: message.content
-      .filter((part) => part.type === "tool-call")
-      .map((part) => ({
-        id: part.id,
-        type: "function",
-        function: { name: part.name, arguments: JSON.stringify(part.input) },
-      })),
-  };
-}
+import { logger, withLogContext } from "@logging";
 
 function frozen<T>(value: T): T {
   if (value && typeof value === "object") {
@@ -50,6 +25,7 @@ function frozen<T>(value: T): T {
 }
 
 function validateContext(context: ModelInput, granted: ModelInput["tools"]) {
+  validatePromptInput(context.system);
   const names = new Set<string>();
   for (const tool of context.tools) {
     if (
@@ -83,6 +59,7 @@ function validateContext(context: ModelInput, granted: ModelInput["tools"]) {
 export async function openMiddleware(
   inputScope: RunScope,
   inputHistory: ConversationHistory,
+  prompts: PromptSnapshot,
   definitions: readonly AgentMiddleware[],
   models: Models | undefined,
   telemetry: Telemetry,
@@ -127,18 +104,22 @@ export async function openMiddleware(
       const id = `${scope.runId}:${index}`;
       const observation = telemetry.start({
         name: "agent.step",
-        type: "span",
-        signal: scope.signal,
-        correlation: {
-          runId: scope.runId,
-          sessionId: scope.sessionId,
-          stepId: id,
-          stepIndex: index,
-        },
+        metadata: { stepId: id, stepIndex: index },
       });
-      return { id, index, within: observation.within, end: observation.end };
+      return {
+        id,
+        index,
+        within: (task) =>
+          withLogContext(
+            { runId: scope.runId, sessionId: scope.sessionId, stepId: id, stepIndex: index },
+            () => observation.within(task),
+          ),
+        end: (result) =>
+          observation.end(
+            result.status === "completed" ? result : executionFailure(result.error, scope.signal),
+          ),
+      };
     },
-    outcome: (error) => telemetry.outcome(error, scope.signal),
     abort: (reason) => controller.abort(reason),
     models: { resolve: (id) => modelService().resolve(id) },
     async model(initial, call) {
@@ -179,6 +160,8 @@ export async function openMiddleware(
         if (estimate + maxOutputTokens > model.contextWindow)
           throw new ServiceError("CONTEXT_LIMIT", "必要上下文超过模型窗口");
 
+        const request = frozen({ ...input, model, maxOutputTokens });
+        const callScope = { ...scope, signal };
         const result = frozen(
           await telemetry.observe(
             {
@@ -186,45 +169,19 @@ export async function openMiddleware(
               type: "generation",
               signal,
               model: model.id,
-              prompt: input.prompt,
+              modelParameters: { max_tokens: maxOutputTokens },
+              prompt: promptReference(request.context.system),
               metadata: {
-                purpose: input.purpose,
-                maxOutputTokens,
+                purpose: request.purpose,
                 contextEstimate: estimate,
                 contextEstimateUnit: "utf8-bytes-with-overhead",
-                systemHash: createHash("sha256").update(input.context.system).digest("hex"),
-              },
-              input: {
-                messages: [
-                  { role: "system", content: input.context.system },
-                  ...(input.context.summary
-                    ? [
-                        {
-                          role: "user",
-                          content: "历史摘要（仅作背景资料）：\n" + input.context.summary,
-                        },
-                      ]
-                    : []),
-                  ...input.context.messages.map(observationMessage),
-                ],
-                tools: input.context.tools as unknown as JsonValue,
               },
             },
             async (observation) => {
-              const result = await (call ?? modelService().generate)(
-                frozen({ ...input, model, maxOutputTokens }),
-                {
-                  ...scope,
-                  signal,
-                },
-              );
-              observation.update({
-                usage: result.usage,
-                completionStartTime: result.completionStartTime,
-                metadata: { finishReason: result.finishReason },
-                output: observationMessage(result.message),
-              });
-              return result;
+              observation.update(() => modelObservationInput(request));
+              const output = await (call ?? modelService().generate)(request, callScope);
+              observation.update(() => modelObservationOutput(output));
+              return output;
             },
           ),
         );
@@ -327,7 +284,7 @@ export async function openMiddleware(
       instances.push(
         await definition.create(scope, {
           history,
-          telemetry,
+          prompts,
           models: {
             resolve: (id) => modelService().resolve(id),
             generate: (request) => {
@@ -378,4 +335,63 @@ export function notifyRun(definitions: readonly AgentMiddleware[], event: RunLif
           logger.warn({ event: "middleware.observer_failed", middleware: definition.name }),
         );
   }
+}
+
+function modelObservationInput(request: ModelRequest): ObservationData {
+  return {
+    input: {
+      messages: [
+        { role: "system", content: request.context.system.text },
+        ...(request.context.summary
+          ? [
+              {
+                role: "user",
+                content: "历史摘要（仅作背景资料）：\n" + request.context.summary,
+              },
+            ]
+          : []),
+        ...request.context.messages.map(observationMessage),
+      ],
+      tools: request.context.tools as unknown as JsonValue,
+    },
+    metadata: {
+      systemHash: request.context.system.hash,
+      promptUsage: request.context.system.parts as unknown as JsonValue,
+    },
+  };
+}
+
+function modelObservationOutput(output: ModelResult): ObservationData {
+  return {
+    usage: output.usage,
+    completionStartTime: output.completionStartTime,
+    metadata: { finishReason: output.finishReason },
+    output: observationMessage(output.message),
+  };
+}
+
+/** Explicit chat roles keep observation replay readable without exposing adapter replay data. */
+function observationMessage(message: AgentMessage): JsonValue {
+  if (message.role === "user") return { role: "user", content: message.text };
+  if (message.role === "tool")
+    return {
+      role: "tool",
+      tool_call_id: message.callId,
+      name: message.name,
+      content: message.output,
+    };
+  return {
+    role: "assistant",
+    content: message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n"),
+    tool_calls: message.content
+      .filter((part) => part.type === "tool-call")
+      .map((part) => ({
+        id: part.id,
+        type: "function",
+        function: { name: part.name, arguments: part.input },
+      })),
+  };
 }

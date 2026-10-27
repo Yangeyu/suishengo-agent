@@ -50,7 +50,6 @@ export const pi = {
                   {
                     model: info,
                     purpose: "conversation",
-                    prompt: input.prompt,
                     maxOutputTokens: info.maxOutputTokens,
                     context: {
                       system: input.system,
@@ -107,7 +106,7 @@ export const pi = {
         const agent = new Agent({
           initialState: {
             model,
-            systemPrompt: input.system,
+            systemPrompt: input.system.text,
             messages: input.messages.map((message) => toPi(message, model)),
             tools: input.tools.definitions.map((tool) => ({
               name: tool.name,
@@ -157,7 +156,7 @@ export const pi = {
             await input.onEvent({ type: "step-end", step });
             activeStep?.end(
               failure || signal.aborted
-                ? input.execution.outcome(failure ?? signal.reason)
+                ? { status: "failed", error: failure ?? signal.reason }
                 : { status: "completed" },
             );
             activeStep = undefined;
@@ -240,7 +239,7 @@ export const pi = {
           unsubscribe();
           activeStep?.end(
             failure || signal.aborted
-              ? input.execution.outcome(failure ?? signal.reason)
+              ? { status: "failed", error: failure ?? signal.reason }
               : { status: "completed" },
           );
         }

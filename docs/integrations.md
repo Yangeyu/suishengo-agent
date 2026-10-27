@@ -36,12 +36,12 @@ model:
 
 上下文压缩和执行预算也在 YAML 中配置：
 
-| 配置                  | 默认行为                                                                 |
-| --------------------- | ------------------------------------------------------------------------ |
-| `context.compaction`  | 触发比例 0.7，优先保留近期 2 轮，摘要上限 1024 tokens；设为 `false` 关闭 |
-| `runtime.limits`      | 每轮最多 8 个模型步骤、12 次工具调用、32000 tokens                       |
-| `runtime.concurrency` | 全局最多 8 个运行，每个用户最多 2 个                                     |
-| `runtime.timeoutMs`   | 每轮 120000 毫秒                                                         |
+| 配置                  | 默认行为                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `context.compaction`  | 触发比例 0.7，优先保留近期 2 轮，摘要上限 1024 tokens；设为 `false` 关闭           |
+| `runtime.limits`      | 每轮最多 8 个模型步骤、12 次工具调用、32000 tokens                                 |
+| `runtime.concurrency` | 全局最多 8 个运行，每个用户最多 2 个                                               |
+| `runtime.timeoutMs`   | 每轮协作超时 120000 毫秒；取消与收尾语义见[状态与恢复](architecture.md#状态与恢复) |
 
 对话和摘要共用模型与运行 token 预算，摘要不调用业务工具。预算不足可提前触发压缩，窗口不足时可减少保留的旧交互。上下文大小使用保守 UTF-8 字节估算；压缩可能损失信息，原始历史保留在数据库。具体算法与持久化规则见[上下文与摘要](architecture.md#上下文与摘要)。
 
@@ -51,35 +51,61 @@ model:
 
 默认读取随应用发布的 `apps/backend/config.yaml`，与进程工作目录无关。`CONFIG_FILE` 可指定另一份完整文件，建议使用绝对路径；相对路径按进程工作目录解析。自定义文件不会与默认文件合并，省略的可选字段按所属契约补默认值。YAML 未知字段和不合法配置会启动失败；修改文件后重启生效。
 
-配置文件按能力分组，插件拥有自身参数约束，应用负责生产认证、远程 Prompt 连接等跨能力校验。策略只从 YAML 读取，部署参数和凭据从环境变量读取。`loadConfig` 解析后形成完整对象，插件不查询全局配置服务。迁移命令只读取 `DATABASE_URL`，不加载模型或 HTTP 配置。
+配置文件按能力分组，插件拥有自身参数约束，应用负责生产认证、远程 Prompt 连接等跨能力校验。执行策略从 YAML 读取，部署参数、环境观测开关和凭据从环境变量读取。`loadConfig` 解析后形成完整对象，插件不查询全局配置服务。迁移命令只读取 `DATABASE_URL`，不加载模型或 HTTP 配置。
 
-| 变量                       | 默认值                               | 用途                                       |
-| -------------------------- | ------------------------------------ | ------------------------------------------ |
-| `CONFIG_FILE`              | 随应用发布的 config.yaml             | 选择完整配置文件                           |
-| `NODE_ENV`                 | development                          | 运行环境，生产部署设置为 production        |
-| `HOST`                     | 127.0.0.1                            | HTTP 监听地址；容器内为 0.0.0.0            |
-| `PORT`                     | 4400                                 | HTTP 监听端口                              |
-| `LOG_LEVEL`                | info                                 | 诊断日志级别                               |
-| `APP_RELEASE`              | 无                                   | 观测中的 commit 或镜像版本                 |
-| `LANGFUSE_CAPTURE_CONTENT` | production 为 false，其他环境为 true | 部署环境是否允许采集经过大小限制的输入输出 |
+| 变量                           | 默认值                               | 用途                                       |
+| ------------------------------ | ------------------------------------ | ------------------------------------------ |
+| `CONFIG_FILE`                  | 随应用发布的 config.yaml             | 选择完整配置文件                           |
+| `NODE_ENV`                     | development                          | 运行环境，生产部署设置为 production        |
+| `HOST`                         | 127.0.0.1                            | HTTP 监听地址；容器内为 0.0.0.0            |
+| `PORT`                         | 4400                                 | HTTP 监听端口                              |
+| `LOG_LEVEL`                    | info                                 | 诊断日志级别                               |
+| `TELEMETRY_ENABLED`            | false                                | 是否启用观测 SDK 与 Langfuse 导出          |
+| `APP_RELEASE`                  | 无                                   | 观测中的 commit 或镜像版本                 |
+| `LANGFUSE_CAPTURE_CONTENT`     | production 为 false，其他环境为 true | 部署环境是否允许采集经过大小限制的输入输出 |
+| `LANGFUSE_SHUTDOWN_TIMEOUT_MS` | 10000                                | 观测关闭等待期限，1–25000 毫秒             |
 
 配置文件选择能力及参数，插件依赖与挂载顺序由 `application.ts` 管理。
 
 远程 Prompt 和 MCP 的条件配置见下文。frontend 的 `AGENT_ACCESS_TOKEN` 和 `BACKEND_URL`（默认 `http://127.0.0.1:4400`）、eval 的 `EVAL_BASE_URL` / `EVAL_TOKEN`、集成测试的 `TEST_DATABASE_URL` 分别属于对应入口；生产 Compose 的 `BACKEND_IMAGE` 和可选 `HTTP_PORT` 属于部署配置。
 
-## 产品 Prompt 与 Langfuse
+## Prompt 管理与 Langfuse
 
-产品 Prompt 默认来自 [backend/agent/prompts.ts](../apps/backend/src/agent/prompts.ts)。YAML 的 `prompts.remote` 可指定 text Prompt 的 `name` 和正整数 `version`；服务在启动时读取该固定版本，读取失败会阻止启动。
+当前管理产品指令和摘要指令，使用 text 模板。默认内容与变量契约分别见 [backend/agent/prompts.ts](../apps/backend/src/agent/prompts.ts) 和 [context/prompts.ts](../plugins/context/src/prompts.ts)；定义、解析与渲染的职责见[模块归属](architecture.md#模块归属)。
 
-Langfuse 连接需要完整的 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY` 和 `LANGFUSE_SECRET_KEY`。三项全部留空时关闭外部导出，部分配置会启动失败；远程 Prompt 也需要这组连接参数。部署前核对所选 Langfuse 服务版本与工程锁定 SDK 的兼容性。
+YAML 通过同一绑定结构选择远程来源，未绑定的定义使用模块本地模板：
 
-观测按 Run → Step → Operation 建立层级，记录实际触发的上下文压缩与摘要保存、摘要及对话模型调用、工具调用；运行终态与提交失败记录在 Run 上。generation 记录标准模型字段、实际 usage、首个生成内容时间、结束原因及最终 system 文本哈希。远程 Prompt 的名称和固定版本随请求关联到对话 generation；摘要调用不冒用产品 Prompt 版本。无价格配置时不主动上报零费用，平台费用推算仍需正确的模型价格映射。
+```yaml
+prompts:
+  cacheTtlSeconds: 60
+  bindings:
+    agent.system:
+      name: suishengo/agent/system
+      version: 2
+    context.compaction:
+      name: suishengo/context/compaction
+      label: production
+```
 
-`NODE_ENV` 作为观测环境；可选 `APP_RELEASE` 标识 commit 或镜像版本。会话和运行关联传播到每个节点，Step 与 toolCall 关联在相应作用域内传播。当前不上报用户标识，只保留业务查询所需的 runId/sessionId。
+每个绑定的 `version` 与 `label` 必须二选一。未知或未启用模块的 key、重复定义、缺少连接会在组装时失败；远程模板在运行准备阶段读取，获取失败或变量契约不符会令本次运行失败，不回退到本地文案。默认绑定为空，不要求 Langfuse。
 
-`LANGFUSE_CAPTURE_CONTENT` 在 development/test 默认开启，在 production 默认关闭。开启后记录用户问题、回答、模型消息与工具参数和结果。结构化内容在序列化前屏蔽常见凭据字段，并限制深度、条目数和单字段大小；这些规则不保证任意业务正文都已脱敏。模型实际请求不受观测内容处理影响。
+每次运行固定实际取得的 Prompt 版本，运行中的标签切换只影响后续解析。SDK 缓存默认 60 秒，过期缓存可在后台刷新期间继续返回旧版本；清单始终记录实际取得的版本。测试和需要即时解析的实验可设置 `cacheTtlSeconds: 0`。需要配套发布时使用显式版本集合，多个独立标签不提供原子发布。
 
-观测导出不提供持久化队列或送达保证。平台联调在专用测试项目中按 runId 回读 Run、Step、generation 和 tool，检查父子关系、输入输出、usage、Prompt 版本，并按 purpose/status/stepId 筛选。模拟 OTLP 接收成功只验证本地导出协议。远程 Prompt 联调需确认配置的固定版本实际生效。开发实例准备见[开发环境](../deploy/development/README.md)。
+远程模板使用模块声明的 `{{variable}}` 占位符；缺失、额外或不匹配的变量均报错，变量值只替换一次。一个受管理部分构成完整 system 时，generation 使用 Langfuse 原生 Prompt 关联；组合来源记录在 `promptUsage` 中。
+
+摘要模板变更会影响历史摘要复用，规则见[上下文与摘要](architecture.md#上下文与摘要)。启用观测时记录运行级 Prompt 清单和逐次使用来源；PG 保存摘要复用指纹，不保存完整 Prompt 快照或输入复现档案。
+
+Langfuse 连接需要完整的 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY` 和 `LANGFUSE_SECRET_KEY`。观测由 `TELEMETRY_ENABLED` 显式控制，未设置时关闭；本地开发示例设为 `true`，生产示例设为 `false`。开启时必须提供完整连接。关闭时不初始化观测 SDK、不采集正文、不发送观测请求。远程 Prompt 独立使用这组连接，不受观测开关影响；部分连接配置会启动失败。JS/TS SDK 6.0.2 要求 Langfuse v4.59.0 或更高版本，参见[官方兼容说明](https://langfuse.com/docs/observability/sdk/overview)。
+
+Langfuse 按会话和 runId 定位执行记录，调用层级和关联字段见[日志与观测](architecture.md#日志与观测)。generation 包含模型、`modelParameters.max_tokens`、首个内容时间、结束原因和 system 文本哈希；Prompt 关联按上述来源规则记录。环境来自 `NODE_ENV`，发布版本来自可选的 `APP_RELEASE`。
+
+运行预算中的输入 token 数包含缓存读写；观测导出的 `input`、`input_cached_tokens`、`input_cache_write_tokens` 分别表示非缓存输入、缓存读取和缓存写入，另记 `output` 与 `total`。模型返回全零 usage 时标记 `usageAvailable: false`，省略实测 usage；失败或取消也不补零。平台估算与服务商实测需区分，费用计算取决于平台的模型及价格配置。
+
+`LANGFUSE_CAPTURE_CONTENT` 在 development/test 默认开启，在 production 默认关闭。启用观测且开启采集时，记录用户问题、已提交回答、模型消息与工具参数和结果；仅关闭正文采集时保留调用层级和诊断 metadata，包括工具定义中的描述和展示名称。工具说明用于描述能力，不填写凭据或用户数据。输入输出在序列化前屏蔽常见结构化凭据字段，并限制深度、条目数、字符串及总大小；这不等于任意业务正文都已脱敏。原始异常正文和适配器 replay 数据不导出。
+
+导出使用 SDK 的批处理与重试，每次网络请求超时 5 秒。`LANGFUSE_SHUTDOWN_TIMEOUT_MS` 限制关闭时的等待时长；超时或失败记录 `telemetry.shutdown_failed`，SDK 请求可能继续收尾。观测记录失败只产生诊断日志，导出不提供持久化队列或送达保证。
+
+平台联调使用专用测试项目：按 runId 回读 Run、Step、generation 和工具节点，检查父子关系、采集开关、usage 及 Prompt 版本；在对应节点核对 purpose、status、stepId。远程 Prompt 需确认配置的固定版本实际生效。本地 OTLP 接收成功只证明导出协议通过，平台写入和查询需独立验证。开发实例准备见[开发环境](../deploy/development/README.md)。
 
 ## 当前会话检索
 

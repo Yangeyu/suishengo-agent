@@ -3,21 +3,22 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { authOptionsSchema } from "@backend/http/auth";
 import { runtimeOptionsSchema } from "@runtime/config";
-import { compactionPolicySchema } from "@plugins/context/src/compaction";
+import { contextOptionsSchema, validateContextOptions } from "@plugins/context/src/config";
 import { mcpOptionsSchema } from "@plugins/mcp/src/index";
 import { piModelOptionsSchema, piModelSelectionSchema } from "@plugins/pi/src/model/config";
-import { remotePromptSchema } from "@plugins/prompts/src/index";
+import { promptsOptionsSchema } from "@plugins/prompts/src/config";
 import { postgresOptionsSchema } from "@plugins/sessions-pg/src/index";
 import { telemetryOptionsSchema } from "@plugins/telemetry/src/index";
 
 const optional = (value?: string) => value?.trim() || undefined;
+const langfuseConnectionSchema = z.strictObject({
+  baseUrl: z.url(),
+  publicKey: z.string().min(1),
+  secretKey: z.string().min(1),
+});
 const fileSchema = z.strictObject({
   model: z.union([z.literal(false), piModelSelectionSchema]).default(false),
-  context: z
-    .strictObject({
-      compaction: z.union([z.literal(false), compactionPolicySchema]).default(false),
-    })
-    .prefault({}),
+  context: contextOptionsSchema.prefault({}),
   runtime: runtimeOptionsSchema
     .extend({
       concurrency: postgresOptionsSchema.shape.limits,
@@ -30,11 +31,7 @@ const fileSchema = z.strictObject({
         .default(false),
     })
     .prefault({}),
-  prompts: z
-    .strictObject({
-      remote: z.union([z.literal(false), remotePromptSchema]).default(false),
-    })
-    .prefault({}),
+  prompts: promptsOptionsSchema.prefault({}),
 });
 
 export type Config = ReturnType<typeof resolveConfig>;
@@ -84,40 +81,43 @@ export function resolveConfig(input: unknown, env: NodeJS.ProcessEnv) {
       actorSecret: optional(env.MCP_ACTOR_SECRET),
       audience: optional(env.MCP_AUDIENCE),
     });
-  const telemetry = telemetryOptionsSchema.parse({
-    environment,
-    release: optional(env.APP_RELEASE),
-    captureContent:
-      z
-        .enum(["true", "false"])
-        .parse(
-          env.LANGFUSE_CAPTURE_CONTENT ?? (environment === "production" ? "false" : "true"),
-        ) === "true",
-    connection: [env.LANGFUSE_BASE_URL, env.LANGFUSE_PUBLIC_KEY, env.LANGFUSE_SECRET_KEY].some(
-      optional,
-    )
-      ? {
-          baseUrl: optional(env.LANGFUSE_BASE_URL),
-          publicKey: optional(env.LANGFUSE_PUBLIC_KEY),
-          secretKey: optional(env.LANGFUSE_SECRET_KEY),
-        }
-      : undefined,
-  });
+  const langfuse = [env.LANGFUSE_BASE_URL, env.LANGFUSE_PUBLIC_KEY, env.LANGFUSE_SECRET_KEY].some(
+    optional,
+  )
+    ? langfuseConnectionSchema.parse({
+        baseUrl: optional(env.LANGFUSE_BASE_URL),
+        publicKey: optional(env.LANGFUSE_PUBLIC_KEY),
+        secretKey: optional(env.LANGFUSE_SECRET_KEY),
+      })
+    : undefined;
+  const telemetryEnabled =
+    z.enum(["true", "false"]).parse(env.TELEMETRY_ENABLED ?? "false") === "true";
+  const telemetry =
+    telemetryEnabled &&
+    telemetryOptionsSchema.extend({ connection: langfuseConnectionSchema }).parse({
+      connection: langfuse,
+      environment,
+      release: optional(env.APP_RELEASE),
+      shutdownTimeoutMs: env.LANGFUSE_SHUTDOWN_TIMEOUT_MS
+        ? Number(env.LANGFUSE_SHUTDOWN_TIMEOUT_MS)
+        : undefined,
+      captureContent:
+        z
+          .enum(["true", "false"])
+          .parse(
+            env.LANGFUSE_CAPTURE_CONTENT ?? (environment === "production" ? "false" : "true"),
+          ) === "true",
+    });
 
   if (environment === "production" && (auth.authSecret || !auth.jwksUrl?.startsWith("https://")))
     throw new Error("Production requires HTTPS JWKS authentication");
   if (environment === "production" && !model)
     throw new Error("Production requires a model configuration");
-  if (file.prompts.remote && !telemetry.connection)
+  if (Object.keys(file.prompts.bindings).length && !langfuse)
     throw new Error("Remote prompt requires Langfuse");
   if (environment === "production" && mcp && !mcp.url.startsWith("https://"))
     throw new Error("Production MCP requires HTTPS");
-  if (
-    model &&
-    file.context.compaction &&
-    file.context.compaction.maxSummaryTokens >= model.contextWindow
-  )
-    throw new Error("Summary limit must be smaller than the context window");
+  if (model) validateContextOptions(file.context, model.contextWindow);
 
   return {
     environment,
@@ -127,6 +127,7 @@ export function resolveConfig(input: unknown, env: NodeJS.ProcessEnv) {
     storage,
     model,
     telemetry,
+    langfuse,
     context: file.context,
     prompts: file.prompts,
     tools: { mcp },

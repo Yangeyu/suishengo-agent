@@ -109,6 +109,27 @@ export default [
     },
   },
   {
+    files: ["packages/**/*.ts", "plugins/**/*.ts"],
+    ignores: ["plugins/telemetry/**", "plugins/prompts/**", "**/__tests__/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportDeclaration[source.value='ai']",
+          message: "AI SDK 协议归 HTTP 适配层。",
+        },
+        {
+          selector: "ImportDeclaration[source.value=/^@langfuse\\//]",
+          message: "Langfuse 实现归 telemetry/prompts 插件；执行代码只依赖 harness 契约。",
+        },
+        {
+          selector: "ImportDeclaration[source.value=/^@plugins\\/telemetry\\//]",
+          message: "运行逻辑不能反向依赖观测插件实现。",
+        },
+      ],
+    },
+  },
+  {
     files: ["apps/frontend/src/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-syntax": [

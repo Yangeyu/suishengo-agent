@@ -1,3 +1,4 @@
+import { compactionPrompt } from "@plugins/context/src/prompts";
 import type { AgentMiddleware } from "@harness/execution/middleware";
 import type { Actor, Run } from "@harness";
 import test from "node:test";
@@ -10,14 +11,36 @@ import { resolveConfig } from "@backend/config";
 import { databaseUrl, prepareDatabase } from "@backend-tests/integration/database";
 
 test(
-  "PG compaction: full history, checkpoint reuse, isolation, stale revision and cancellation",
+  "PG compaction: prompt releases, checkpoint reuse, isolation, stale revision and cancellation",
   { skip: !databaseUrl, timeout: 30000 },
   async () => {
     await prepareDatabase();
     const requests: { messages: { role: string; content: string }[] }[] = [];
     let hold = false;
+    let promptVersion = 1;
     let started: (() => void) | undefined;
     const server = createServer(async (request, response) => {
+      if (request.url?.startsWith("/api/public/v2/prompts/")) {
+        response.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            name: "context-summary",
+            version: promptVersion,
+            type: "text",
+            config: {},
+            labels: [],
+            tags: [],
+            prompt: compactionPrompt.defaultTemplate + "\n模板版本 " + promptVersion,
+          }),
+        );
+        return;
+      }
+      if (request.url?.startsWith("/api/public/otel/")) {
+        for await (const _part of request) {
+          /* Drain the local telemetry protocol fixture. */
+        }
+        response.writeHead(200, { "content-type": "application/json" }).end("{}");
+        return;
+      }
       let body = "";
       for await (const part of request) body += part;
       const input = JSON.parse(body) as (typeof requests)[number];
@@ -56,6 +79,10 @@ test(
           modelId: "deepseek-v4.1-flash",
           maxOutputTokens: 256,
         },
+        prompts: {
+          bindings: { "context.compaction": { name: "context-summary", label: "production" } },
+          cacheTtlSeconds: 0,
+        },
         context: {
           compaction: {
             maxSummaryTokens: 128,
@@ -72,6 +99,9 @@ test(
         AUTH_ISSUER: "test",
         AUTH_AUDIENCE: "test",
         AUTH_SECRET: "test-only-secret-at-least-thirty-two",
+        LANGFUSE_BASE_URL: `http://127.0.0.1:${port}`,
+        LANGFUSE_PUBLIC_KEY: "fixture-public",
+        LANGFUSE_SECRET_KEY: "fixture-secret",
         DASHSCOPE_API_KEY: "fixture-key",
         DASHSCOPE_BASE_URL: `http://127.0.0.1:${port}/v1`,
       },
@@ -163,6 +193,26 @@ test(
               message.content.includes("用户票根 T123，仅周末出行。"),
             ),
           ),
+      );
+
+      const previous = await app.sessions.loadSummary(actor, session.id);
+      promptVersion = 2;
+      const releaseStart = requests.length;
+      const updated = await app.runtime.submit(actor, input(session.id, "重新检查出行要求"));
+      assert.equal((await wait(actor, updated)).status, "completed");
+      const replacement = await app.sessions.loadSummary(actor, session.id);
+      assert.ok(replacement && previous);
+      assert.notEqual(replacement.policyVersion, previous.policyVersion);
+      assert.ok(replacement.revision > previous.revision);
+      const summaries = requests
+        .slice(releaseStart)
+        .filter((request) => request.messages[0]!.content.startsWith("压缩以下对话资料"));
+      assert.ok(summaries.length > 0);
+      assert.ok(summaries.every((request) => request.messages[0]!.content.endsWith("模板版本 2")));
+      assert.ok(
+        summaries.some((request) =>
+          request.messages.some((message) => message.content.includes("第 0 轮")),
+        ),
       );
 
       for (let index = 0; index < 6; index++) await seed("需要压缩的新增资料" + "资料".repeat(100));

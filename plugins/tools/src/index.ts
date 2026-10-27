@@ -2,18 +2,18 @@ import type { ToolInterceptor } from "@harness/tools";
 import {
   ServiceError,
   type JsonValue,
-  type Sessions,
   type ToolContext,
   type ToolDefinition,
   type ToolSource,
   type ToolSession,
   type Tools,
-  type Telemetry,
+  type Sessions,
 } from "@harness";
 import type { Context } from "@deepseek-ai/cordis";
 import { Ajv, type ValidateFunction } from "ajv";
 import { pipeline, policy, type ExecutionContext } from "@flow";
 import { logger, withLogContext } from "@logging";
+import type { Telemetry } from "@harness/telemetry";
 import { searchCurrentSession } from "@plugins/tools/src/builtins/search-current-session";
 
 declare module "@deepseek-ai/cordis" {
@@ -26,6 +26,7 @@ type Options = {
   sessions?: Pick<Sessions, "getRun" | "search">;
   definitions?: ToolDefinition[];
   sources: (ToolSource | undefined)[];
+  telemetry: Telemetry;
 };
 type Invocation = {
   input: unknown;
@@ -74,9 +75,9 @@ function createToolSession(
   definitions: ToolDefinition[],
   context: ToolContext,
   maxCalls: number,
-  telemetry: Telemetry,
   close: () => Promise<void>,
-  intercept?: ToolInterceptor,
+  intercept: ToolInterceptor | undefined,
+  telemetry: Telemetry,
 ): ToolSession {
   const invocation = pipeline(validateInput, authorize, (call: Invocation) =>
     intercept
@@ -94,7 +95,11 @@ function createToolSession(
   const registry = new Map<string, { tool: ToolDefinition; validate: ValidateFunction }>();
   let calls = 0;
 
-  for (const tool of definitions) {
+  for (const definition of definitions) {
+    const title = definition.displayName?.trim();
+    const validTitle =
+      title && Array.from(title).length <= 80 && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(title);
+    const tool = { ...definition, displayName: validTitle ? title : undefined };
     if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(tool.name) || registry.has(tool.name)) {
       throw new Error("Invalid or duplicate tool name");
     }
@@ -127,13 +132,11 @@ function createToolSession(
   }
 
   return {
-    definitions: definitions.map(({ name, displayName, description, inputSchema }) => {
-      const title = displayName?.trim();
-      const validTitle =
-        title && Array.from(title).length <= 80 && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(title);
+    definitions: Array.from(registry.values(), ({ tool }) => {
+      const { name, displayName, description, inputSchema } = tool;
       return {
         name,
-        ...(validTitle ? { displayName: title } : {}),
+        ...(displayName ? { displayName } : {}),
         description,
         inputSchema,
       };
@@ -144,16 +147,26 @@ function createToolSession(
       withLogContext({ toolCallId: callId }, () =>
         telemetry.observe(
           {
-            name: "tool.execute",
+            name,
             type: "tool",
             signal: context.signal,
-            correlation: { runId: context.runId, sessionId: context.sessionId, toolCallId: callId },
-            metadata: { tool: name },
+            metadata: { toolCallId: callId },
           },
           async (observation) => {
-            if (input !== undefined) observation.update({ input: input as JsonValue });
+            observation.update(() => {
+              const tool = registry.get(name)?.tool;
+              return {
+                input: input as JsonValue,
+                metadata: tool
+                  ? {
+                      description: tool.description,
+                      ...(tool.displayName ? { displayName: tool.displayName } : {}),
+                    }
+                  : undefined,
+              };
+            });
             const result = await invoke(callId, name, input);
-            observation.update({ output: result });
+            observation.update(() => ({ output: result }));
             return result;
           },
         ),
@@ -163,7 +176,6 @@ function createToolSession(
 
 export const toolsPlugin = {
   name: "tools",
-  inject: ["telemetry"],
 
   apply(ctx: Context, options: Options) {
     const definitions = [
@@ -171,7 +183,6 @@ export const toolsPlugin = {
       ...(options.definitions ?? []),
     ];
     const sources = options.sources.filter((source) => source !== undefined);
-    const telemetry = ctx.telemetry;
     ctx.provide("tools", {
       configured: definitions.length > 0 || sources.length > 0,
 
@@ -192,7 +203,14 @@ export const toolsPlugin = {
           for (const source of sources) opened.push(await source.open(context));
           const available = [...definitions, ...opened.flatMap((source) => source.tools)];
 
-          return createToolSession(available, context, maxCalls, telemetry, close, intercept);
+          return createToolSession(
+            available,
+            context,
+            maxCalls,
+            close,
+            intercept,
+            options.telemetry,
+          );
         } catch (error) {
           // 后续来源初始化失败时，也要释放已经打开的连接。
           await close();

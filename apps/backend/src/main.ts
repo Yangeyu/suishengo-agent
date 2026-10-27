@@ -7,15 +7,11 @@ try {
   app = await createApplication(loadConfig());
   const shutdown = () => {
     const deadline = setTimeout(() => process.exit(1), 30000);
+    // Exporter requests may outlive bounded plugin shutdown; keep the process deadline armed.
     deadline.unref();
-    void app!
-      .close()
-      .then(() => {
-        clearTimeout(deadline);
-      })
-      .catch(() => {
-        process.exitCode = 1;
-      });
+    void app!.close().catch(() => {
+      process.exitCode = 1;
+    });
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);

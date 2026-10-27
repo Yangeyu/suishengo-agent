@@ -1,3 +1,4 @@
+import { noopTelemetry } from "@harness/telemetry";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -9,7 +10,6 @@ import type { SessionSearchResult } from "@harness/sessions";
 import { createApplication } from "@backend/application";
 import { resolveConfig } from "@backend/config";
 import { databaseUrl, prepareDatabase } from "@backend-tests/integration/database";
-import { createTelemetry } from "@plugins/telemetry/src/index";
 import { toolsPlugin } from "@plugins/tools/src/index";
 import type { ChatSnapshot } from "@backend/http/ai-sdk";
 
@@ -80,7 +80,6 @@ test(
     );
     config.http.port = 0;
     const ctx = new Context();
-    ctx.provide("telemetry", createTelemetry());
     let app: Awaited<ReturnType<typeof createApplication>> | undefined;
     try {
       app = await createApplication(config);
@@ -216,7 +215,7 @@ test(
         { name: "AbortError" },
       );
 
-      await ctx.plugin(toolsPlugin, { sessions: store, sources: [] });
+      await ctx.plugin(toolsPlugin, { telemetry: noopTelemetry, sessions: store, sources: [] });
       const context = { actor: alice, runId: current.id, sessionId: session.id, signal };
       const tool = await ctx.tools.open(context, 12);
       assert.deepEqual(

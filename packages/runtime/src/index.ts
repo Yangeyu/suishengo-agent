@@ -1,36 +1,48 @@
-import type { Observation, ObservationOutcome, PromptReference } from "@harness/telemetry";
+import type {
+  Telemetry,
+  Observation,
+  ObservationResult,
+  ObservationData,
+} from "@harness/telemetry";
+import { executionFailure } from "@harness/errors";
 import type { Contexts } from "@harness/context";
 import type { AgentMiddleware } from "@harness/execution/middleware";
 import type { RunScope } from "@harness/scope";
 import type { Models } from "@harness/models";
 import {
+  renderPrompt,
+  promptManifest,
+  type PromptDefinition,
+  type Prompts,
+} from "@harness/prompts";
+import {
   ServiceError,
   type Actor,
+  type AgentEvent,
+  type AgentMessage,
   type AgentExecutor,
   type Tools,
   type AgentLimits,
   type Sessions,
-  type Telemetry,
   type Run,
-  type RunStatus,
 } from "@harness";
 import { openMiddleware, notifyRun } from "@runtime/middleware";
 
 import { policy, type ExecutionContext } from "@flow";
-import { logger } from "@logging";
+import { logger, withLogContext } from "@logging";
 
 export function createRuntime(options: {
   sessions: Sessions;
   agent?: AgentExecutor;
   tools: Tools;
   limits: AgentLimits;
-  system: string;
-  prompt?: PromptReference;
+  system: PromptDefinition;
+  prompts: Prompts;
   timeoutMs: number;
-  telemetry: Telemetry;
   contexts: Contexts;
   models?: Models;
   middleware?: readonly AgentMiddleware[];
+  telemetry: Telemetry;
 }) {
   const active = new Map<string, { controller: AbortController; done: Promise<void> }>();
   const admissions = new Set<Promise<unknown>>();
@@ -38,40 +50,26 @@ export function createRuntime(options: {
   let healthy = true;
 
   async function runAgent(
-    input: { actor: Actor; run: Run; trace: Observation },
+    input: { actor: Actor; run: Run; observation: Observation },
     execution: ExecutionContext,
   ) {
-    const { actor, run, trace } = input;
+    const { actor, run, observation } = input;
     const signal = execution.signal!;
-    const history = await options.contexts.load(actor, run.id);
+    const prompts = await options.prompts.resolve(signal);
+    observation.update({ metadata: { prompts: promptManifest(prompts) } });
+    const history = await options.contexts.load(actor, run.id, prompts);
     const user = history.turns
       .find((turn) => turn.runId === run.id)
       ?.messages.find((message) => message.role === "user");
-    if (user?.role === "user") trace.update({ input: [{ role: "user", content: user.text }] });
+    if (user?.role === "user")
+      observation.update(() => ({ input: [{ role: "user", content: user.text }] }));
 
-    let consumed = 0;
-    const scope: RunScope = Object.freeze({
-      actor: Object.freeze({ ...actor }),
-      runId: run.id,
-      sessionId: run.sessionId,
-      signal,
-      budget: {
-        get remaining() {
-          return Math.max(0, options.limits.maxTokens - consumed);
-        },
-        record(tokens: number) {
-          if (!Number.isFinite(tokens) || tokens < 0)
-            throw new ServiceError("MODEL_USAGE", "模型用量无效");
-          consumed += tokens;
-          if (consumed > options.limits.maxTokens)
-            throw new ServiceError("AGENT_LIMIT", "运行 token 预算已达上限");
-        },
-      },
-    });
+    const scope = createRunScope(actor, run, signal, options.limits.maxTokens);
 
     const middleware = await openMiddleware(
       scope,
       history,
+      prompts,
       options.middleware ?? [],
       options.models,
       options.telemetry,
@@ -90,41 +88,19 @@ export function createRuntime(options: {
       );
 
       await options.agent!.run({
-        system: options.system,
-        prompt: options.prompt,
+        system: renderPrompt(prompts[options.system.key]!),
         messages: history.turns.flatMap((turn) => turn.messages),
         tools,
         execution: middleware.execution,
         limits: options.limits,
         onEvent: async (event) => {
           signal.throwIfAborted();
-          if (event.type === "message" && event.message.role === "assistant") {
-            // Snapshot trusted definitions before commit; never accept an executor's title.
-            event = {
-              ...event,
-              message: {
-                ...event.message,
-                content: event.message.content.map((part) => {
-                  if (part.type !== "tool-call") return part;
-                  const displayName = toolTitles.get(part.name);
-                  return {
-                    type: part.type,
-                    id: part.id,
-                    name: part.name,
-                    input: part.input,
-                    ...(displayName ? { displayName } : {}),
-                  };
-                }),
-              },
-            };
-          }
-          await options.sessions.append(run, event);
-          if (event.type === "message" && event.message.role === "assistant") {
-            const answer = event.message.content
-              .filter((part) => part.type === "text")
-              .map((part) => part.text)
-              .join("\n");
-            if (answer) trace.update({ output: [{ role: "assistant", content: answer }] });
+          const prepared = withToolTitles(event, toolTitles);
+          await options.sessions.append(run, prepared);
+
+          if (prepared.type === "message" && prepared.message.role === "assistant") {
+            const message = prepared.message;
+            observation.update(() => assistantOutput(message));
           }
         },
       });
@@ -141,55 +117,59 @@ export function createRuntime(options: {
   }
 
   async function execute(actor: Actor, run: Run, controller: AbortController) {
-    notifyRun(options.middleware ?? [], {
-      type: "started",
-      runId: run.id,
-      sessionId: run.sessionId,
-      actor,
-      status: "running",
-    });
-    const trace = options.telemetry.start({
+    const observation = options.telemetry.start({
       name: "agent.run",
       type: "agent",
-      correlation: { runId: run.id, sessionId: run.sessionId },
+      trace: { sessionId: run.sessionId, metadata: { runId: run.id } },
+      metadata: { runId: run.id },
     });
-    let outcome: ObservationOutcome = { status: "completed" };
-    let status: Exclude<RunStatus, "running"> = "completed";
-
-    try {
-      await trace.within(() =>
-        policy(runAgent).timeout(options.timeoutMs).build()(
-          { actor, run, trace },
-          { signal: controller.signal },
-        ),
-      );
-    } catch (error) {
-      status = controller.signal.aborted ? "cancelled" : "failed";
-      outcome = options.telemetry.outcome(error, controller.signal);
-      logger.warn({
-        event: "run.execution_failed",
-        runId: run.id,
-        code: error instanceof ServiceError ? error.code : "EXECUTION_FAILED",
+    let result: ObservationResult = { status: "completed" };
+    const task = () =>
+      withLogContext({ runId: run.id, sessionId: run.sessionId }, async () => {
+        notifyRun(options.middleware ?? [], {
+          type: "started",
+          runId: run.id,
+          sessionId: run.sessionId,
+          actor,
+          status: "running",
+        });
+        let status: "completed" | "cancelled" | "failed" = "completed";
+        try {
+          await policy(runAgent).timeout(options.timeoutMs).build()(
+            { actor, run, observation },
+            { signal: controller.signal },
+          );
+        } catch (error) {
+          status = controller.signal.aborted ? "cancelled" : "failed";
+          const failure = executionFailure(error, controller.signal);
+          result = status === "cancelled" ? { status } : failure;
+          logger.warn({
+            event: "run.execution_failed",
+            code: failure.errorCode,
+          });
+        }
+        // A completed model is not a committed run. Failed persistence stops admission.
+        try {
+          await options.sessions.finish(run, status);
+          notifyRun(options.middleware ?? [], {
+            type: "finished",
+            runId: run.id,
+            sessionId: run.sessionId,
+            actor,
+            status,
+          });
+        } catch {
+          healthy = false;
+          result = { status: "failed", errorCode: "RUN_PERSISTENCE_FAILED" };
+          logger.error({ event: "run.persistence_failed" });
+        } finally {
+          observation.update({ metadata: { executionStatus: status } });
+        }
       });
-    }
-
-    // 终态落库失败后停止接单，避免数据库中仍运行的记录与进程状态继续分叉。
     try {
-      trace.update({ metadata: { executionStatus: status } });
-      await trace.within(() => options.sessions.finish(run, status));
-      notifyRun(options.middleware ?? [], {
-        type: "finished",
-        runId: run.id,
-        sessionId: run.sessionId,
-        actor,
-        status,
-      });
-    } catch {
-      healthy = false;
-      outcome = { status: "failed", errorCode: "RUN_PERSISTENCE_FAILED" };
-      logger.error({ event: "run.persistence_failed", runId: run.id });
+      await observation.within(task);
     } finally {
-      trace.end(outcome);
+      observation.end(result);
       active.delete(run.id);
     }
   }
@@ -247,3 +227,58 @@ export function createRuntime(options: {
 }
 
 export type Runtime = ReturnType<typeof createRuntime>;
+
+function createRunScope(actor: Actor, run: Run, signal: AbortSignal, maxTokens: number): RunScope {
+  let consumed = 0;
+  return Object.freeze({
+    actor: Object.freeze({ ...actor }),
+    runId: run.id,
+    sessionId: run.sessionId,
+    signal,
+    budget: {
+      get remaining() {
+        return Math.max(0, maxTokens - consumed);
+      },
+      record(tokens: number) {
+        if (!Number.isFinite(tokens) || tokens < 0)
+          throw new ServiceError("MODEL_USAGE", "模型用量无效");
+        consumed += tokens;
+        if (consumed > maxTokens) throw new ServiceError("AGENT_LIMIT", "运行 token 预算已达上限");
+      },
+    },
+  });
+}
+
+/** Snapshot trusted tool titles without mutating the executor's message. */
+function withToolTitles(
+  event: AgentEvent,
+  titles: ReadonlyMap<string, string | undefined>,
+): AgentEvent {
+  if (event.type !== "message" || event.message.role !== "assistant") return event;
+
+  return {
+    ...event,
+    message: {
+      ...event.message,
+      content: event.message.content.map((part) => {
+        if (part.type !== "tool-call") return part;
+        const displayName = titles.get(part.name);
+        return {
+          type: part.type,
+          id: part.id,
+          name: part.name,
+          input: part.input,
+          ...(displayName ? { displayName } : {}),
+        };
+      }),
+    },
+  };
+}
+
+function assistantOutput(message: Extract<AgentMessage, { role: "assistant" }>): ObservationData {
+  const answer = message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  return answer ? { output: [{ role: "assistant", content: answer }] } : {};
+}

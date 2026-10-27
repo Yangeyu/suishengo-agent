@@ -50,15 +50,13 @@ JSON 事件通过 SSE 的 `data:` 字段发送；`data: [DONE]` 表示传输结�
 
 当前输出包括消息开始、步骤开始/结束、文本及 reasoning 开始/增量/结束、工具输入/结果/错误、运行错误、abort 和 finish。具体结构见 OpenAPI 的 `UIMessageChunk`；它描述当前服务输出的 SDK 事件子集。`UIMessage` 是 HTTP 从核心消息生成的展示快照，包含文本、reasoning、步骤与动态工具 parts。核心存储不使用 SDK 消息结构。
 
-流中的工具错误不一定使整个运行失败。`[DONE]` 仅说明流已结束；业务完成状态以运行查询为准。未来新增消息 part 时，需要同步客户端解析、HTTP 响应描述、核心内容语义、输出适配及对应验证。
+流中的工具错误不一定使整个运行失败。`[DONE]` 仅说明流已结束；业务完成状态以运行查询为准。
 
 ### 工具展示名称
 
-快照的 `dynamic-tool` part 和流中的 `tool-input-available` 可携带 `toolMetadata: { "displayName": "检索当前会话" }`。客户端优先显示非空字符串 `displayName`，缺失时回退 `toolName`；`toolName` 始终是原始工具标识，不用于存放中文标题。结果与错误事件继续按 `toolCallId` 更新同一工具 part，客户端应保留已收到的展示元数据。
+快照的 `dynamic-tool` part 和流中的 `tool-input-available` 可携带 `toolMetadata: { "displayName": "检索当前会话" }`。客户端优先显示非空字符串 `displayName`，缺失时回退 `toolName`；`toolName` 是原始工具标识。结果与错误事件按 `toolCallId` 更新同一工具 part，客户端应保留已收到的展示元数据。
 
-名称由服务端在调用记录提交时保存，实时消息、刷新和整轮重放使用同一份值。工具改名或下线不会改变历史标题；旧消息没有展示信息时正常回退。标题按普通文本渲染，不作为 HTML/Markdown 执行。模型的工具 `description` 不直接作为界面标题。
-
-这是可选字段增量，消息 `schemaVersion` 仍为 1；旧客户端可继续显示 `toolName`。存储归属见[架构设计](../architecture.md#前端工具展示名称)。
+名称由服务端在调用记录提交时保存，实时消息、刷新和整轮重放使用同一份值，工具定义变更不影响已保存的标题。标题按普通文本渲染，不作为 HTML/Markdown 执行。存储归属见[架构设计](../architecture.md#前端工具展示名称)。
 
 ## 幂等与并发
 

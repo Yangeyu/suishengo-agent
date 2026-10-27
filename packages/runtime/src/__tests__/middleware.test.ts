@@ -1,4 +1,5 @@
-import type { Telemetry } from "@harness/telemetry";
+import { noopTelemetry } from "@harness/telemetry";
+import { inlinePrompt, composePrompts } from "@harness/prompts";
 import type { AgentMiddleware } from "@harness/execution/middleware";
 import type { RunScope } from "@harness/scope";
 import type { ModelRequest, Models } from "@harness/models";
@@ -14,7 +15,7 @@ const request: ModelRequest = {
   purpose: "conversation",
   maxOutputTokens: 100,
   context: {
-    system: "system",
+    system: inlinePrompt("system"),
     messages: [{ role: "user", text: "question" }],
     tools: [{ name: "lookup", description: "read", inputSchema: { type: "object" } }],
   },
@@ -45,7 +46,7 @@ test("middleware composes in order, isolates concurrent state, and closes provid
   const models: Models = {
     resolve: () => model,
     async generate(input, scope) {
-      assert.match(input.context.system, /A:B$/);
+      assert.match(input.context.system.text, /A\n\nB$/);
       events.push(scope.runId + ":provider");
       try {
         return {
@@ -69,7 +70,10 @@ test("middleware composes in order, isolates concurrent state, and closes provid
         },
         beforeModel(input) {
           mark("before:" + ++count);
-          return { ...input.context, system: input.context.system + ":" + name };
+          return {
+            ...input.context,
+            system: composePrompts(input.context.system, inlinePrompt(name)),
+          };
         },
         async wrapModelCall(input, next) {
           mark("enter");
@@ -98,9 +102,10 @@ test("middleware composes in order, isolates concurrent state, and closes provid
       const run = await openMiddleware(
         scope(user),
         history,
+        {},
         [extension("A"), extension("B")],
         models,
-        telemetry,
+        noopTelemetry,
       );
       try {
         await run.start();
@@ -159,6 +164,7 @@ test("wrapper failures propagate after the provider has closed", async (t) => {
   const run = await openMiddleware(
     scope("alice"),
     history,
+    {},
     [
       {
         name: "failure",
@@ -171,7 +177,7 @@ test("wrapper failures propagate after the provider has closed", async (t) => {
       },
     ],
     models,
-    telemetry,
+    noopTelemetry,
   );
   t.after(() => run.close());
   await assert.rejects(run.execution.model(request), /late failure/);
@@ -185,6 +191,7 @@ test("failed setup disposes initialized middleware", async () => {
     openMiddleware(
       scope("alice"),
       history,
+      {},
       [
         {
           name: "first",
@@ -202,7 +209,7 @@ test("failed setup disposes initialized middleware", async () => {
         },
       ],
       models,
-      telemetry,
+      noopTelemetry,
     ),
     /setup/,
   );
@@ -210,7 +217,7 @@ test("failed setup disposes initialized middleware", async () => {
 });
 
 test("cancellation prevents model execution", async (t) => {
-  const cancelled = await openMiddleware(scope("alice"), history, [], models, telemetry);
+  const cancelled = await openMiddleware(scope("alice"), history, {}, [], models, noopTelemetry);
   t.after(() => cancelled.close());
   cancelled.execution.abort();
   await assert.rejects(cancelled.execution.model(request), { name: "AbortError" });
@@ -220,6 +227,7 @@ test("tool middleware cannot repeat or widen a prepared grant", async (t) => {
   const run = await openMiddleware(
     scope("alice"),
     history,
+    {},
     [
       {
         name: "repeat",
@@ -232,7 +240,7 @@ test("tool middleware cannot repeat or widen a prepared grant", async (t) => {
       },
     ],
     models,
-    telemetry,
+    noopTelemetry,
   );
   t.after(() => run.close());
   await run.execution.model(request);
@@ -255,6 +263,7 @@ test("tool middleware can handle an execution failure", async (t) => {
   const recovery = await openMiddleware(
     scope("alice"),
     history,
+    {},
     [
       {
         name: "recover",
@@ -270,7 +279,7 @@ test("tool middleware can handle an execution failure", async (t) => {
       },
     ],
     models,
-    telemetry,
+    noopTelemetry,
   );
   t.after(() => recovery.close());
   await recovery.execution.model(request);
@@ -307,9 +316,33 @@ test("run observers do not block execution", async () => {
   assert.equal(observed, true);
 });
 
-const telemetry: Telemetry = {
-  start: () => ({ within: (task) => task(), update() {}, event() {}, end() {} }),
-  observe: async (_spec, task) => task(telemetry.start(_spec)),
-  outcome: () => ({ status: "failed" }),
-  close: async () => {},
-};
+test("middleware cannot replace prompt content while keeping stale provenance", async (t) => {
+  let called = false;
+  const run = await openMiddleware(
+    scope("alice"),
+    history,
+    {},
+    [
+      {
+        name: "bad-prompt-replacement",
+        create: () => ({
+          beforeModel: (request) => ({
+            ...request.context,
+            system: { ...request.context.system, text: "replaced" },
+          }),
+        }),
+      },
+    ],
+    {
+      ...models,
+      generate: async (...args) => {
+        called = true;
+        return models.generate(...args);
+      },
+    },
+    noopTelemetry,
+  );
+  t.after(() => run.close());
+  await assert.rejects(run.execution.model(request), /provenance/);
+  assert.equal(called, false);
+});
