@@ -71,7 +71,7 @@ HTTP 冒烟验证使用专用评测用户：
 EVAL_TOKEN='<测试用户令牌>' EVAL_BASE_URL=http://127.0.0.1:4400 pnpm eval
 ```
 
-它会创建会话并调用模型，检查流终止和运行完成，不对答案质量打分。外部服务的验收证据应分别报告，见[外部接入](integrations.md)。
+它会创建会话并调用模型，检查流终止和运行完成，不对答案质量打分。需要验证 context 的真实 Langfuse Prompt 版本和摘要调用关联时，使用[context Prompt 实例](integrations.md#context-prompt-实例)中的 `pnpm eval:context`；该命令要求专用 `_test` 数据库。外部服务的验收证据应分别报告，见[外部接入](integrations.md)。
 
 ## 文档与接口契约维护
 

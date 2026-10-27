@@ -24,6 +24,7 @@
     "test:integration": "tsx --test --test-concurrency=1 apps/backend/__tests__/integration/*.test.ts",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "eval": "tsx --env-file-if-exists=.env apps/eval/src/main.ts",
+    "eval:context": "tsx --env-file-if-exists=.env apps/eval/src/context-prompt.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings 0"

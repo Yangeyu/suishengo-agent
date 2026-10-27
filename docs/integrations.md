@@ -107,6 +107,32 @@ Langfuse 按会话和 runId 定位执行记录，调用层级和关联字段见[
 
 平台联调使用专用测试项目：按 runId 回读 Run、Step、generation 和工具节点，检查父子关系、采集开关、usage 及 Prompt 版本；在对应节点核对 purpose、status、stepId。远程 Prompt 需确认配置的固定版本实际生效。本地 OTLP 接收成功只证明导出协议通过，平台写入和查询需独立验证。开发实例准备见[开发环境](../deploy/development/README.md)。
 
+## context Prompt 实例
+
+[案例配置](../apps/eval/context-prompt.yaml) 将 `context.compaction` 绑定到 Langfuse text Prompt `suishengo/context/compaction` 的固定版本。运行前准备目标测试项目：
+
+1. 使用 [context/prompts.ts](../plugins/context/src/prompts.ts) 中的默认模板，在 Langfuse 创建同名 text Prompt；已有模板时核对所选版本的内容与变量契约。
+2. 将案例配置的 `version` 设置为平台实际返回的版本；仓库示例值为 `1`。编辑模板后，选择需要验证的版本再更新配置。
+3. 在本地 `.env` 填写该项目的 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY` 和 `LANGFUSE_SECRET_KEY`。
+
+填写 `DASHSCOPE_API_KEY` 后，首次准备专用数据库：
+
+```sh
+docker compose -f deploy/development/compose.yaml exec -T postgres createdb -U suishengo suishengo_context_example_test
+```
+
+在仓库根目录运行：
+
+```sh
+TEST_DATABASE_URL=postgresql://suishengo:local-development@127.0.0.1:5438/suishengo_context_example_test pnpm eval:context
+```
+
+[案例命令](../apps/eval/src/context-prompt.ts) 使用独立配置和 `_test` 数据库，执行迁移，创建随机测试身份与八轮合成历史，并在空闲端口启动独立 backend。随后通过签名身份调用 HTTP 对话，触发真实摘要与回答。案例显式开启观测和正文采集，运行结束后关闭服务并回读 Langfuse Observations v2；可通过 `CONFIG_FILE` 指定另一份完整案例配置。
+
+成功条件是：HTTP 运行完成、PG 已保存摘要、平台存在 context 压缩节点及 generation、摘要 generation 的 Prompt 名称和版本符合配置、实际 system 文本及其指纹与远程模板一致、generation 的父节点属于 context 压缩。命令输出 Prompt/Trace 链接、摘要和回答，并保存 `.data/context-prompt/<runId>.json`。这是接入与来源追踪验证，不是自动质量评分或 A/B 实验。
+
+本例合成事实为票根 T123、只能周末出行、两人预算 500 元，以及尚未核验票根和领取权益。检查摘要和最终回答是否保留这些事实，且没有把记录对话说成已完成业务操作。低压缩阈值用于让少量历史触发摘要；日常服务使用 backend 自身配置。
+
 ## 当前会话检索
 
 内置只读工具 `search_current_session` 由 `plugins/tools/src/builtins/search-current-session.ts` 定义。应用向 tools 插件注入 sessions 能力后，由插件组装并默认提供该工具，不需要 MCP 或额外数据库配置。模型只提交 `query` 和可选的 `limit`（默认 5，最多 10）；用户和运行身份来自服务端上下文，不能指定其他用户、会话或运行。

@@ -1,0 +1,30 @@
+# context 摘要的真实联调案例；仅供专用 _test 数据库使用。
+model:
+  provider: dashscope
+  modelId: deepseek-v4.1-flash
+  maxOutputTokens: 2048
+
+context:
+  compaction:
+    version: summary-v1
+    # 用小规模合成历史触发摘要，便于观察版本关联。
+    triggerFraction: 0.01
+    keepRecentTurns: 1
+    maxSummaryTokens: 1024
+
+runtime:
+  timeoutMs: 120000
+  limits:
+    maxSteps: 3
+    maxToolCalls: 2
+    maxTokens: 16000
+
+tools:
+  mcp: false
+
+prompts:
+  cacheTtlSeconds: 0
+  bindings:
+    context.compaction:
+      name: suishengo/context/compaction
+      version: 1
